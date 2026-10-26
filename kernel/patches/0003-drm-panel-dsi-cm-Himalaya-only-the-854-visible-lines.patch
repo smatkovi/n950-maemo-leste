@@ -1,0 +1,54 @@
+From f76f1d4235fda2cbaf088982efe1c4b41276cfa6 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 26 Oct 2026 17:58:52 +0100
+Subject: [PATCH 3/6] drm/panel: dsi-cm: Himalaya: only the 854 visible lines
+
+The Nokia N950's Himalaya panel has 864 lines of which the top and
+bottom 5 are hidden behind the case, as the TODO in its device tree
+notes. Report the 854 visible lines as the mode and write them from
+line 5 on (a new y_offset in the panel data, used for the DCS page
+address), so that nothing of the picture is cut off.
+
+Untested on hardware.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-dsi-cm.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-dsi-cm.c b/drivers/gpu/drm/panel/panel-dsi-cm.c
+index 481d46030..d6a6b346c 100644
+--- a/drivers/gpu/drm/panel/panel-dsi-cm.c
++++ b/drivers/gpu/drm/panel/panel-dsi-cm.c
+@@ -32,6 +32,7 @@ static const struct of_device_id dsicm_of_match[];
+ struct dsic_panel_data {
+ 	u32 xres;
+ 	u32 yres;
++	u32 y_offset;	/* invisible lines above the shown ones */
+ 	u32 refresh;
+ 	u32 width_mm;
+ 	u32 height_mm;
+@@ -189,7 +190,9 @@ static int dsicm_set_update_window(struct panel_drv_data *ddata, int x_offset)
+ 	if (r < 0)
+ 		return r;
+ 
+-	r = mipi_dsi_dcs_set_page_address(dsi, 0, ddata->mode.vdisplay - 1);
++	r = mipi_dsi_dcs_set_page_address(dsi, ddata->panel_data->y_offset,
++					  ddata->mode.vdisplay +
++					  ddata->panel_data->y_offset - 1);
+ 	if (r < 0)
+ 		return r;
+ 
+@@ -959,9 +962,11 @@ static const struct dsic_panel_data taal_data = {
+ 	.te_support = true,
+ };
+ 
++/* 864 lines, of which the top and bottom 5 are not visible */
+ static const struct dsic_panel_data himalaya_data = {
+ 	.xres = 480,
+-	.yres = 864,
++	.yres = 854,
++	.y_offset = 5,
+ 	.refresh = 60,
+ 	.width_mm = 49,
+ 	.height_mm = 88,

@@ -1,0 +1,60 @@
+From 903e45657dc28e1ecf6cb25ea254eaa8a9d4a72a Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 26 Oct 2026 18:31:24 +0100
+Subject: [PATCH 6/6] ARM: dts: omap3-n950: BH1770GLC proximity and light
+ sensor
+
+On i2c2 0x38, interrupt gpio_83, LED at 50 mA and a glass attenuation of
+3.85 as in Nokia's board file; its LED supply is the battery, which gets
+a fixed regulator (vbat).
+
+Untested on hardware.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 25 ++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index cda90978c..ddaacb3c8 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -15,6 +15,16 @@ / {
+ 	model = "Nokia N950";
+ 	compatible = "nokia,omap3-n950", "ti,omap3630", "ti,omap3";
+ 
++	/* the battery, which some parts are fed from directly */
++	vbat: regulator-vbat {
++		compatible = "regulator-fixed";
++		regulator-name = "VBAT";
++		regulator-min-microvolt = <3700000>;
++		regulator-max-microvolt = <3700000>;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
+ 	keys {
+ 		compatible = "gpio-keys";
+ 
+@@ -325,6 +335,21 @@ led@8 {
+ 		};
+ 	};
+ 
++	/*
++	 * BH1770GLC / SFH7770 proximity and ambient light: LED at 50 mA, a
++	 * glass attenuation of 3.85 (Nokia's board file)
++	 */
++	proximity@38 {
++		compatible = "rohm,bh1770glc";
++		reg = <0x38>;
++		interrupt-parent = <&gpio3>;
++		interrupts = <19 IRQ_TYPE_EDGE_FALLING>;	/* gpio_83 */
++		Vcc-supply = <&vaux1>;
++		Vleds-supply = <&vbat>;
++		rohm,proximity-led-microamp = <50000>;
++		rohm,glass-attenuation = <63078>;	/* 16384 * 3.85 */
++	};
++
+ 	/*
+ 	 * bq27521 fuel gauge (address from elinux.org/N950). The bq24153a
+ 	 * charger at 0x6b is left out: its charge current settings depend on

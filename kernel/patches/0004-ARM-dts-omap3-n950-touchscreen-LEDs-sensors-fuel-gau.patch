@@ -1,0 +1,255 @@
+From bc9bb05b64d1a88d94c20d7b825469a40b9b794f Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 26 Oct 2026 18:29:00 +0100
+Subject: [PATCH 4/6] ARM: dts: omap3-n950: touchscreen, LEDs, sensors, fuel
+ gauge, read-only OneNAND
+
+From Nokia's RM-680 board file (GPIOs, addresses, supplies, LED
+currents, sensor axes) unless noted:
+
+- Atmel maXTouch on i2c2 0x4b, interrupt gpio_61, reset gpio_81, as in
+  postmarketOS's N9/N950 tree, but with the reset active low as today's
+  driver and binding expect, and with its supplies (vaux1, vio) instead
+  of keeping those regulators always on.
+- LP5523 on i2c2 0x32: channels 0-5 and 8 at 5 mA (up to 13 mA),
+  external clock, enable gpio_41. Which LED each channel lights is not
+  known, so the channels keep neutral names.
+- bq27521 fuel gauge on i2c2 0x55 (address from elinux.org). The
+  bq24153a charger stays out: its charge current settings depend on
+  values not known here.
+- The LIS302DL through IIO (st_accel) as on the N900, since Leste builds
+  no lis3lv02d driver: the N900's board axes X, -Y, -Z became
+  [-1 0 0; 0 1 0; 0 0 -1], so the N950's -Y, -X, -Z become
+  [0 1 0; 1 0 0; 0 0 -1].
+- AK8974 compass on i2c3 0x0f (axes as in the board file, unverified).
+- The panel's rotation (270, landscape with the keyboard, as Leste's
+  2018 N950 port had it) instead of the TODO.
+- All OneNAND partitions read-only: the boot loader, the calibration
+  data, the kernel partition and Harmattan's belong to Harmattan.
+
+Untested on hardware.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 190 +++++++++++++++++++++--
+ 1 file changed, 178 insertions(+), 12 deletions(-)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index b99f97880..cda90978c 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -9,6 +9,7 @@
+ 
+ #include "omap3-n950-n9.dtsi"
+ #include <dt-bindings/input/input.h>
++#include <dt-bindings/interrupt-controller/irq.h>
+ 
+ / {
+ 	model = "Nokia N950";
+@@ -189,18 +190,181 @@ MATRIX_KEY(0x07, 0x07, KEY_R)
+ 			 >;
+ };
+ 
++/*
++ * The accelerometer through IIO (st_accel), as the N900's: the
++ * lis3lv02d misc driver's properties of omap3-n950-n9.dtsi go. Nokia's
++ * board file has the axes as -Y, -X, -Z; the N900's X, -Y, -Z became
++ * [-1 0 0; 0 1 0; 0 0 -1] in IIO's convention, hence this matrix.
++ */
+ &lis302 {
+-	st,axis-x = <(-2)>; /* LIS3_INV_DEV_Y */
+-	st,axis-y = <(-1)>; /* LIS3_INV_DEV_X */
+-	st,axis-z = <(-3)>; /* LIS3_INV_DEV_Z */
++	compatible = "st,lis302dl";
++	vdd-supply = <&vaux1>;
++	vddio-supply = <&vio>;
++	interrupts-extended = <&gpio6 20 IRQ_TYPE_EDGE_RISING>,	/* gpio_180, INT1 */
++			      <&gpio6 21 IRQ_TYPE_EDGE_RISING>;	/* gpio_181, INT2 */
++	mount-matrix = "0", "1", "0",
++		       "1", "0", "0",
++		       "0", "0", "-1";
++
++	/delete-property/ Vdd-supply;
++	/delete-property/ Vdd_IO-supply;
++	/delete-property/ st,click-single-x;
++	/delete-property/ st,click-single-y;
++	/delete-property/ st,click-single-z;
++	/delete-property/ st,click-threshold-x;
++	/delete-property/ st,click-threshold-y;
++	/delete-property/ st,click-threshold-z;
++	/delete-property/ st,click-time-limit;
++	/delete-property/ st,click-latency;
++	/delete-property/ st,wakeup-x-hi;
++	/delete-property/ st,wakeup-y-hi;
++	/delete-property/ st,wakeup-threshold;
++	/delete-property/ st,wakeup2-z-hi;
++	/delete-property/ st,wakeup2-threshold;
++	/delete-property/ st,highpass-cutoff-hz;
++	/delete-property/ st,irq1-ff-wu-1;
++	/delete-property/ st,irq1-ff-wu-2;
++	/delete-property/ st,irq2-click;
++	/delete-property/ st,wu-duration-1;
++	/delete-property/ st,wu-duration-2;
++};
++
++&i2c3 {
++	/* AK8974 compass; axes in Nokia's board file X, -Y, -Z (unverified here) */
++	magnetometer@f {
++		compatible = "asahi-kasei,ak8974";
++		reg = <0x0f>;
++		avdd-supply = <&vaux1>;
++		dvdd-supply = <&vio>;
++		mount-matrix = "1", "0", "0",
++			       "0", "-1", "0",
++			       "0", "0", "-1";
++	};
++};
++
++&omap3_pmx_core {
++	touchscreen_pins: touchscreen-pins {
++		pinctrl-single,pins = <
++			/*
++			 * gpio_61 (TINTX) stays as the boot loader muxed it:
++			 * muxing it breaks the maXTouch (postmarketOS)
++			 */
++			OMAP3_CORE1_IOPAD(0x20f2, PIN_OUTPUT | MUX_MODE4)	/* dss_data11.gpio_81 -> TRESX */
++		>;
++	};
++};
++
++&i2c2 {
++	/* Atmel maXTouch, from Nokia's board file and postmarketOS's N9/N950 tree */
++	touchscreen@4b {
++		compatible = "atmel,maxtouch";
++		reg = <0x4b>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&touchscreen_pins>;
++		interrupt-parent = <&gpio2>;
++		interrupts = <29 IRQ_TYPE_EDGE_FALLING>;	/* gpio_61 */
++		reset-gpios = <&gpio3 17 GPIO_ACTIVE_LOW>;	/* gpio_81, TRESX */
++		vdda-supply = <&vaux1>;
++		vdd-supply = <&vio>;
++	};
++
++	/*
++	 * LP5523: channels 0-5 and 8 at 5.0 mA (up to 13 mA), 6 and 7
++	 * unused, external clock (Nokia's board file); which LED each
++	 * channel lights is not known here
++	 */
++	led-controller@32 {
++		compatible = "national,lp5523";
++		reg = <0x32>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		clock-mode = /bits/ 8 <2>;	/* LP55XX_CLOCK_EXT */
++		enable-gpios = <&gpio2 9 GPIO_ACTIVE_HIGH>;	/* gpio_41 */
++
++		led@0 {
++			reg = <0>;
++			chan-name = "lp5523:channel0";
++			led-cur = /bits/ 8 <50>;
++			max-cur = /bits/ 8 <130>;
++		};
++		led@1 {
++			reg = <1>;
++			chan-name = "lp5523:channel1";
++			led-cur = /bits/ 8 <50>;
++			max-cur = /bits/ 8 <130>;
++		};
++		led@2 {
++			reg = <2>;
++			chan-name = "lp5523:channel2";
++			led-cur = /bits/ 8 <50>;
++			max-cur = /bits/ 8 <130>;
++		};
++		led@3 {
++			reg = <3>;
++			chan-name = "lp5523:channel3";
++			led-cur = /bits/ 8 <50>;
++			max-cur = /bits/ 8 <130>;
++		};
++		led@4 {
++			reg = <4>;
++			chan-name = "lp5523:channel4";
++			led-cur = /bits/ 8 <50>;
++			max-cur = /bits/ 8 <130>;
++		};
++		led@5 {
++			reg = <5>;
++			chan-name = "lp5523:channel5";
++			led-cur = /bits/ 8 <50>;
++			max-cur = /bits/ 8 <130>;
++		};
++		led@8 {
++			reg = <8>;
++			chan-name = "lp5523:channel8";
++			led-cur = /bits/ 8 <50>;
++			max-cur = /bits/ 8 <130>;
++		};
++	};
+ 
+-	st,min-limit-x = <(-32)>;
+-	st,min-limit-y = <3>;
+-	st,min-limit-z = <3>;
++	/*
++	 * bq27521 fuel gauge (address from elinux.org/N950). The bq24153a
++	 * charger at 0x6b is left out: its charge current settings depend on
++	 * values (sense resistor) not known here, and wrong ones are unsafe.
++	 */
++	fuel-gauge@55 {
++		compatible = "ti,bq27521";
++		reg = <0x55>;
++	};
++};
+ 
+-	st,max-limit-x = <(-3)>;
+-	st,max-limit-y = <32>;
+-	st,max-limit-z = <32>;
++/*
++ * Nothing on the OneNAND belongs to this system: the boot loader (NOLO),
++ * the calibration data (config), the kernel partition and Harmattan's
++ * own stay read-only
++ */
++&gpmc {
++	onenand@0,0 {
++		partition@0 {
++			read-only;
++		};
++		partition@1 {
++			read-only;
++		};
++		partition@2 {
++			read-only;
++		};
++		partition@3 {
++			read-only;
++		};
++		partition@4 {
++			read-only;
++		};
++		partition@5 {
++			read-only;
++		};
++		partition@6 {
++			read-only;
++		};
++	};
+ };
+ 
+ &dss {
+@@ -241,10 +405,12 @@ lcd0: panel@0 {
+ 		width-mm = <49>; /* 48.960 mm */
+ 		height-mm = <88>; /* 88.128 mm */
+ 
+-		/* TODO:
+-		 * - panel is upside-down
+-		 * - top + bottom 5px are not visible
++		/*
++		 * Mounted for portrait use, the phone is used in landscape
++		 * with the keyboard. Of its 864 lines the top and bottom 5
++		 * are hidden (panel-dsi-cm shows the 854 visible ones).
+ 		 */
++		rotation = <270>;
+ 		panel-timing {
+ 			clock-frequency = <0>;          /* Calculated by dsi */
+ 
