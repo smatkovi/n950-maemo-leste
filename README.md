@@ -24,14 +24,16 @@ and boot it.
 | Touchscreen, LEDs, sensors, fuel gauge | device tree for the maXTouch, LP5523, LIS302DL accelerometer, AK8974 compass, bq27521; OneNAND read-only so the boot loader is never writable from Leste (`0004`) |
 | Proximity and light | BH1770GLC/SFH7770 device tree support and node (`0005`, `0006`) |
 | Audio | TLV320DAC33 device tree support, a machine driver for TWL5031 + TLV320DAC33 + TPA6140A2 on one card, device tree nodes (`0007` to `0011`). No headset detection: that runs through the TWL5031 ACI block, which has no driver. |
-| GPS (BCM4751) | in progress, see below |
+| GPS (BCM4751) | driver with Nokia's interface, binding lines for wakeup and HOST_REQ, device tree node (`0012` to `0014`); see below |
 | Charger (bq24153a) | left out on purpose until it can be tested on the phone |
 
 GPS: the BCM4751's protocol is proprietary and has no free implementation.
-The driver being written here offers Nokia's own interface
-(`/dev/bcm4751-gps`, `enable`/`hostreq`/`wakeup` in sysfs), so that
-Harmattan's GPS stack from the MeeGo partition might be run under Leste.
-Whether that works is open until it is tried on the phone.
+The `bcm4751-gps` driver offers Nokia's own interface (`/dev/bcm4751-gps`
+for raw I2C transfers, `enable`, `wakeup` and `hostreq` in the I2C device's
+sysfs directory `3-a1fa`), so that Harmattan's GPS stack from the MeeGo
+partition might be run under Leste. Without it the chip can be powered,
+but nothing turns its data into positions. Whether Harmattan's stack runs
+this way is open until it is tried on the phone.
 
 Booting: tethered over USB into RAM first (nothing is flashed), later
 ubiboot with Leste on its own partition next to Harmattan.

@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 26 Oct 2026 19:13:04 +0100
+Subject: [PATCH] dt-bindings: gnss: brcm,bcm4751: wakeup and HOST_REQ lines
+
+On I2C the BCM4751 has two more lines besides enable: a wakeup input
+the host drives, and HOST_REQ, which the chip raises when it has data
+for the host. The Nokia N950 and N9 wire both to GPIOs. Add them, with
+an I2C example at the chip's 10-bit address.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/gnss/brcm,bcm4751.yaml           | 27 +++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/gnss/brcm,bcm4751.yaml b/Documentation/devicetree/bindings/gnss/brcm,bcm4751.yaml
+index 089166089..8648071c6 100644
+--- a/Documentation/devicetree/bindings/gnss/brcm,bcm4751.yaml
++++ b/Documentation/devicetree/bindings/gnss/brcm,bcm4751.yaml
+@@ -50,6 +50,16 @@ properties:
+       If the line is active low such as NSTANDBY, it should be tagged
+       GPIO_ACTIVE_LOW.
+ 
++  wakeup-gpios:
++    maxItems: 1
++    description: Wakeup input of the chip, driven by the host. Used with
++      the I2C bus, as on the Nokia N950 and N9.
++
++  host-req-gpios:
++    maxItems: 1
++    description: HOST_REQ output of the chip, raised when it has data for
++      the host. Used with the I2C bus, as on the Nokia N950 and N9.
++
+ required:
+   - compatible
+   - enable-gpios
+@@ -68,3 +78,20 @@ examples:
+             current-speed = <38400>;
+         };
+     };
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++    #include <dt-bindings/i2c/i2c.h>
++    i2c {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        gnss@800001fa {
++            compatible = "brcm,bcm4751";
++            reg = <(I2C_TEN_BIT_ADDRESS | 0x1fa)>;
++            vdd-auxin-supply = <&vio>;
++            vddio-supply = <&vio>;
++            enable-gpios = <&gpio3 30 GPIO_ACTIVE_HIGH>;
++            wakeup-gpios = <&gpio3 27 GPIO_ACTIVE_HIGH>;
++            host-req-gpios = <&gpio3 31 GPIO_ACTIVE_HIGH>;
++        };
++    };
+-- 
+2.56.0
+

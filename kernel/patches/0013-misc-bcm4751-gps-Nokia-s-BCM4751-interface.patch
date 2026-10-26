@@ -1,0 +1,456 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 26 Oct 2026 19:13:04 +0100
+Subject: [PATCH] misc: bcm4751-gps: Nokia's BCM4751 interface
+
+Harmattan's GPS stack on the Nokia N950 and N9 talks to the BCM4751
+through Nokia's own driver: /dev/bcm4751-gps for raw I2C transfers of
+up to 64 bytes (with the I2C_SLAVE, I2C_SLAVE_FORCE and I2C_TENBIT
+ioctls to change the address), and enable, wakeup and hostreq in the
+I2C device's sysfs directory, hostreq being notified on a rising edge
+of HOST_REQ. The chip's protocol is proprietary and has no free
+implementation, so this interface is what lets that stack run on a
+current kernel.
+
+The same interface as Nokia's, rebuilt on the device tree, gpiod and
+regulators: supplies vdd-auxin and vddio, enable, wakeup and host-req
+GPIOs. Fixed on the way: the ioctl no longer returns with the mutex
+held on a bad address, transfers take the mutex so an address change
+cannot happen mid-transfer, the sysfs writes check their input, and
+resume restores the wakeup line instead of always raising it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/misc/Kconfig       |  12 ++
+ drivers/misc/Makefile      |   1 +
+ drivers/misc/bcm4751-gps.c | 383 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 396 insertions(+)
+ create mode 100644 drivers/misc/bcm4751-gps.c
+
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+index b9c11f673..8bf1f5237 100644
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -371,6 +371,18 @@ config SENSORS_TSL2550
+ 	  This driver can also be built as a module.  If so, the module
+ 	  will be called tsl2550.
+ 
++config BCM4751_GPS
++	tristate "Broadcom BCM4751 GPS on I2C (Nokia N950/N9 interface)"
++	depends on I2C && GPIOLIB
++	help
++	  Power control and raw I2C access for the BCM4751 GPS chip of the
++	  Nokia N950 and N9, with the interface of Nokia's own driver:
++	  /dev/bcm4751-gps and enable, wakeup and hostreq in sysfs. The
++	  chip's protocol is proprietary; this driver does not decode it.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called bcm4751-gps. If unsure, say N here.
++
+ config SENSORS_BH1770
+ 	 tristate "BH1770GLC / SFH7770 combined ALS - Proximity sensor"
+ 	 depends on I2C
+diff --git a/drivers/misc/Makefile b/drivers/misc/Makefile
+index b32a2597d..93e6de1c2 100644
+--- a/drivers/misc/Makefile
++++ b/drivers/misc/Makefile
+@@ -20,6 +20,7 @@ obj-$(CONFIG_RPMB)		+= rpmb-core.o
+ obj-$(CONFIG_QCOM_COINCELL)	+= qcom-coincell.o
+ obj-$(CONFIG_QCOM_FASTRPC)	+= fastrpc.o
+ obj-$(CONFIG_SENSORS_BH1770)	+= bh1770glc.o
++obj-$(CONFIG_BCM4751_GPS)	+= bcm4751-gps.o
+ obj-$(CONFIG_SENSORS_APDS990X)	+= apds990x.o
+ obj-$(CONFIG_ENCLOSURE_SERVICES) += enclosure.o
+ obj-$(CONFIG_KGDB_TESTS)	+= kgdbts.o
+diff --git a/drivers/misc/bcm4751-gps.c b/drivers/misc/bcm4751-gps.c
+new file mode 100644
+index 000000000..7ac74cc34
+--- /dev/null
++++ b/drivers/misc/bcm4751-gps.c
+@@ -0,0 +1,383 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Broadcom BCM4751 GPS on I2C, with the interface of Nokia's driver for the
++ * N950 and N9 (Andrei Emeltchenko, Yuri Zaporozhets, Nokia Corporation),
++ * which Harmattan's GPS stack uses:
++ *
++ *  - /dev/bcm4751-gps: read() and write() are single I2C transfers of up
++ *    to 64 bytes; the I2C_SLAVE, I2C_SLAVE_FORCE and I2C_TENBIT ioctls
++ *    change the address and address width of these transfers.
++ *  - sysfs on the I2C device: "enable" powers the chip (supplies and its
++ *    enable line), "wakeup" drives its wakeup line, "hostreq" reads the
++ *    HOST_REQ line, on which the chip signals data for the host; it can be
++ *    poll()ed, a rising edge notifies it.
++ *
++ * The protocol on top is proprietary and not implemented here.
++ */
++
++#include <linux/fs.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/i2c-dev.h>
++#include <linux/interrupt.h>
++#include <linux/miscdevice.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/mutex.h>
++#include <linux/regulator/consumer.h>
++#include <linux/uaccess.h>
++
++/* Packet sizes of Nokia's interface */
++#define BCM4751_MAX_BINPKT_RX_LEN	64
++#define BCM4751_MAX_BINPKT_TX_LEN	64
++
++static const char * const bcm4751_supply_names[] = {
++	"vdd-auxin",
++	"vddio",
++};
++
++struct bcm4751_gps {
++	struct miscdevice miscdev;
++	struct i2c_client *client;
++	struct mutex mutex;	/* power state, wakeup, client address */
++	struct regulator_bulk_data supplies[ARRAY_SIZE(bcm4751_supply_names)];
++	struct gpio_desc *enable_gpio;
++	struct gpio_desc *wakeup_gpio;
++	struct gpio_desc *host_req_gpio;
++	bool enabled;
++	bool wakeup;
++};
++
++static int bcm4751_gps_set_enable(struct bcm4751_gps *gps, bool enable)
++{
++	int ret = 0;
++
++	mutex_lock(&gps->mutex);
++	if (enable && !gps->enabled) {
++		ret = regulator_bulk_enable(ARRAY_SIZE(gps->supplies),
++					    gps->supplies);
++		if (!ret) {
++			gpiod_set_value_cansleep(gps->enable_gpio, 1);
++			gps->enabled = true;
++		}
++	} else if (!enable && gps->enabled) {
++		gpiod_set_value_cansleep(gps->enable_gpio, 0);
++		regulator_bulk_disable(ARRAY_SIZE(gps->supplies), gps->supplies);
++		gps->enabled = false;
++	}
++	mutex_unlock(&gps->mutex);
++
++	return ret;
++}
++
++static void bcm4751_gps_set_wakeup(struct bcm4751_gps *gps, bool wakeup)
++{
++	mutex_lock(&gps->mutex);
++	gpiod_set_value_cansleep(gps->wakeup_gpio, wakeup);
++	gps->wakeup = wakeup;
++	mutex_unlock(&gps->mutex);
++}
++
++static struct bcm4751_gps *to_bcm4751_gps(struct file *file)
++{
++	return container_of(file->private_data, struct bcm4751_gps, miscdev);
++}
++
++static int bcm4751_gps_open(struct inode *inode, struct file *file)
++{
++	return stream_open(inode, file);
++}
++
++static ssize_t bcm4751_gps_read(struct file *file, char __user *buf,
++				size_t count, loff_t *offset)
++{
++	struct bcm4751_gps *gps = to_bcm4751_gps(file);
++	u8 tmp[BCM4751_MAX_BINPKT_RX_LEN];
++	int ret;
++
++	count = min(count, sizeof(tmp));
++	if (!count)
++		return 0;
++
++	mutex_lock(&gps->mutex);
++	ret = i2c_master_recv(gps->client, tmp, count);
++	mutex_unlock(&gps->mutex);
++	if (ret < 0)
++		return ret;
++
++	return copy_to_user(buf, tmp, ret) ? -EFAULT : ret;
++}
++
++static ssize_t bcm4751_gps_write(struct file *file, const char __user *buf,
++				 size_t count, loff_t *offset)
++{
++	struct bcm4751_gps *gps = to_bcm4751_gps(file);
++	u8 tmp[BCM4751_MAX_BINPKT_TX_LEN];
++	int ret;
++
++	count = min(count, sizeof(tmp));
++	if (!count)
++		return 0;
++
++	if (copy_from_user(tmp, buf, count))
++		return -EFAULT;
++
++	mutex_lock(&gps->mutex);
++	ret = i2c_master_send(gps->client, tmp, count);
++	mutex_unlock(&gps->mutex);
++
++	return ret;
++}
++
++static long bcm4751_gps_ioctl(struct file *file, unsigned int cmd,
++			      unsigned long arg)
++{
++	struct bcm4751_gps *gps = to_bcm4751_gps(file);
++	struct i2c_client *client = gps->client;
++	long ret = 0;
++
++	mutex_lock(&gps->mutex);
++	switch (cmd) {
++	case I2C_SLAVE:
++	case I2C_SLAVE_FORCE:
++		if (arg > 0x3ff ||
++		    (!(client->flags & I2C_CLIENT_TEN) && arg > 0x7f))
++			ret = -EINVAL;
++		else
++			client->addr = arg;
++		break;
++	case I2C_TENBIT:
++		if (arg)
++			client->flags |= I2C_CLIENT_TEN;
++		else
++			client->flags &= ~I2C_CLIENT_TEN;
++		break;
++	default:
++		ret = -ENOTTY;
++		break;
++	}
++	mutex_unlock(&gps->mutex);
++
++	return ret;
++}
++
++static const struct file_operations bcm4751_gps_fops = {
++	.owner		= THIS_MODULE,
++	.open		= bcm4751_gps_open,
++	.read		= bcm4751_gps_read,
++	.write		= bcm4751_gps_write,
++	.unlocked_ioctl	= bcm4751_gps_ioctl,
++	/* the arguments are numbers, the same for 32-bit callers */
++	.compat_ioctl	= bcm4751_gps_ioctl,
++};
++
++static ssize_t enable_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct bcm4751_gps *gps = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%d\n", gps->enabled);
++}
++
++static ssize_t enable_store(struct device *dev, struct device_attribute *attr,
++			    const char *buf, size_t len)
++{
++	struct bcm4751_gps *gps = dev_get_drvdata(dev);
++	unsigned int val;
++	int ret;
++
++	ret = kstrtouint(buf, 0, &val);
++	if (ret)
++		return ret;
++	if (val > 1)
++		return -EINVAL;
++
++	ret = bcm4751_gps_set_enable(gps, val);
++
++	return ret ? ret : len;
++}
++static DEVICE_ATTR_RW(enable);
++
++static ssize_t hostreq_show(struct device *dev, struct device_attribute *attr,
++			    char *buf)
++{
++	struct bcm4751_gps *gps = dev_get_drvdata(dev);
++	int val = gpiod_get_value_cansleep(gps->host_req_gpio);
++
++	if (val < 0)
++		return val;
++
++	return sysfs_emit(buf, "%d\n", val);
++}
++static DEVICE_ATTR_RO(hostreq);
++
++static ssize_t wakeup_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	struct bcm4751_gps *gps = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%d\n", gps->wakeup);
++}
++
++static ssize_t wakeup_store(struct device *dev, struct device_attribute *attr,
++			    const char *buf, size_t len)
++{
++	struct bcm4751_gps *gps = dev_get_drvdata(dev);
++	unsigned int val;
++	int ret;
++
++	ret = kstrtouint(buf, 0, &val);
++	if (ret)
++		return ret;
++	if (val > 1)
++		return -EINVAL;
++
++	bcm4751_gps_set_wakeup(gps, val);
++
++	return len;
++}
++static DEVICE_ATTR_RW(wakeup);
++
++static struct attribute *bcm4751_gps_attrs[] = {
++	&dev_attr_enable.attr,
++	&dev_attr_hostreq.attr,
++	&dev_attr_wakeup.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(bcm4751_gps);
++
++static irqreturn_t bcm4751_gps_host_req(int irq, void *data)
++{
++	struct bcm4751_gps *gps = data;
++
++	sysfs_notify(&gps->client->dev.kobj, NULL, "hostreq");
++
++	return IRQ_HANDLED;
++}
++
++static int bcm4751_gps_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct bcm4751_gps *gps;
++	int i, irq, ret;
++
++	gps = devm_kzalloc(dev, sizeof(*gps), GFP_KERNEL);
++	if (!gps)
++		return -ENOMEM;
++
++	gps->client = client;
++	mutex_init(&gps->mutex);
++	i2c_set_clientdata(client, gps);
++
++	for (i = 0; i < ARRAY_SIZE(gps->supplies); i++)
++		gps->supplies[i].supply = bcm4751_supply_names[i];
++	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(gps->supplies),
++				      gps->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get supplies\n");
++
++	/* Off until "enable" is written, as with Nokia's driver */
++	gps->enable_gpio = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
++	if (IS_ERR(gps->enable_gpio))
++		return dev_err_probe(dev, PTR_ERR(gps->enable_gpio),
++				     "failed to get enable gpio\n");
++
++	gps->wakeup_gpio = devm_gpiod_get(dev, "wakeup", GPIOD_OUT_LOW);
++	if (IS_ERR(gps->wakeup_gpio))
++		return dev_err_probe(dev, PTR_ERR(gps->wakeup_gpio),
++				     "failed to get wakeup gpio\n");
++
++	gps->host_req_gpio = devm_gpiod_get(dev, "host-req", GPIOD_IN);
++	if (IS_ERR(gps->host_req_gpio))
++		return dev_err_probe(dev, PTR_ERR(gps->host_req_gpio),
++				     "failed to get host-req gpio\n");
++
++	irq = client->irq > 0 ? client->irq : gpiod_to_irq(gps->host_req_gpio);
++	if (irq < 0)
++		return dev_err_probe(dev, irq, "no HOST_REQ interrupt\n");
++
++	ret = devm_request_threaded_irq(dev, irq, NULL, bcm4751_gps_host_req,
++					IRQF_TRIGGER_RISING | IRQF_ONESHOT,
++					"bcm4751-gps", gps);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to request irq %d\n",
++				     irq);
++
++	gps->miscdev.minor = MISC_DYNAMIC_MINOR;
++	gps->miscdev.name = "bcm4751-gps";
++	gps->miscdev.fops = &bcm4751_gps_fops;
++	gps->miscdev.parent = dev;
++	ret = misc_register(&gps->miscdev);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to register misc device\n");
++
++	return 0;
++}
++
++static void bcm4751_gps_remove(struct i2c_client *client)
++{
++	struct bcm4751_gps *gps = i2c_get_clientdata(client);
++
++	misc_deregister(&gps->miscdev);
++	bcm4751_gps_set_enable(gps, false);
++}
++
++static void bcm4751_gps_shutdown(struct i2c_client *client)
++{
++	bcm4751_gps_set_enable(i2c_get_clientdata(client), false);
++}
++
++static int bcm4751_gps_suspend(struct device *dev)
++{
++	struct bcm4751_gps *gps = dev_get_drvdata(dev);
++
++	/* Nokia's driver let the wakeup line go low over suspend */
++	mutex_lock(&gps->mutex);
++	gpiod_set_value_cansleep(gps->wakeup_gpio, 0);
++	mutex_unlock(&gps->mutex);
++
++	return 0;
++}
++
++static int bcm4751_gps_resume(struct device *dev)
++{
++	struct bcm4751_gps *gps = dev_get_drvdata(dev);
++
++	mutex_lock(&gps->mutex);
++	gpiod_set_value_cansleep(gps->wakeup_gpio, gps->wakeup);
++	mutex_unlock(&gps->mutex);
++
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(bcm4751_gps_pm_ops, bcm4751_gps_suspend,
++				bcm4751_gps_resume);
++
++static const struct i2c_device_id bcm4751_gps_id[] = {
++	{ "bcm4751-gps" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, bcm4751_gps_id);
++
++static const struct of_device_id bcm4751_gps_of_match[] = {
++	{ .compatible = "brcm,bcm4751" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, bcm4751_gps_of_match);
++
++static struct i2c_driver bcm4751_gps_driver = {
++	.driver = {
++		.name = "bcm4751-gps",
++		.of_match_table = bcm4751_gps_of_match,
++		.dev_groups = bcm4751_gps_groups,
++		.pm = pm_sleep_ptr(&bcm4751_gps_pm_ops),
++	},
++	.probe = bcm4751_gps_probe,
++	.remove = bcm4751_gps_remove,
++	.shutdown = bcm4751_gps_shutdown,
++	.id_table = bcm4751_gps_id,
++};
++module_i2c_driver(bcm4751_gps_driver);
++
++MODULE_DESCRIPTION("Broadcom BCM4751 GPS on I2C, Nokia N950/N9 interface");
++MODULE_LICENSE("GPL");
+-- 
+2.56.0
+

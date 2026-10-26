@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 26 Oct 2026 19:13:04 +0100
+Subject: [PATCH] ARM: dts: omap3-n950: BCM4751 GPS
+
+On i2c3 at the 10-bit address 0x1fa, supplies from vio, enable on
+gpio 94, wakeup on gpio 91, HOST_REQ on gpio 95, as in Nokia's
+board-rm680.c.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index 259be8bca..61696f899 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -10,6 +10,7 @@
+ #include "omap3-n950-n9.dtsi"
+ #include <dt-bindings/input/input.h>
+ #include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/i2c/i2c.h>
+ 
+ / {
+ 	model = "Nokia N950";
+@@ -515,3 +516,19 @@ tpa6140a2: amplifier@60 {
+ 		Vdd-supply = <&vbat>;
+ 	};
+ };
++
++/*
++ * GPS: BCM4751 at the 10-bit address 0x1fa, powered from vio
++ * (board-rm680.c). The bcm4751-gps driver offers Nokia's interface.
++ */
++&i2c3 {
++	gnss@800001fa {
++		compatible = "brcm,bcm4751";
++		reg = <(I2C_TEN_BIT_ADDRESS | 0x1fa)>;
++		vdd-auxin-supply = <&vio>;
++		vddio-supply = <&vio>;
++		enable-gpios = <&gpio3 30 GPIO_ACTIVE_HIGH>;	/* 94 */
++		wakeup-gpios = <&gpio3 27 GPIO_ACTIVE_HIGH>;	/* 91 */
++		host-req-gpios = <&gpio3 31 GPIO_ACTIVE_HIGH>;	/* 95 */
++	};
++};
+-- 
+2.56.0
+
