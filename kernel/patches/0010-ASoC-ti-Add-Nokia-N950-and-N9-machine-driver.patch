@@ -1,0 +1,391 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 26 Oct 2026 19:06:39 +0100
+Subject: [PATCH] ASoC: ti: Add Nokia N950 and N9 machine driver
+
+The N950 and N9 split their audio between two codecs: the TWL5031 on
+McBSP3 (earpiece, loudspeaker behind an amplifier on TWL GPIO 7,
+hearing aid coil, digital and headset microphones, FM radio input) and
+a TLV320DAC33 on McBSP2 for the headphones through a TPA6140A2. Nokia's
+kernel had a card for each; here both links share one card, so the
+analog connection from the TWL5031's left predriver into the DAC33 line
+inputs is an ordinary DAPM route.
+
+Formats and clocks follow Nokia's dfl61 drivers: the TWL5031 link in
+I2S for two channels and DSP_A for four (as omap-twl4030 does), the
+DAC33 in left-justified mode with the codec as clock master, clocked
+from the 32 kHz sleep clock. The TPA6140A2 volume is limited to 21 of
+31 as Nokia did.
+
+Headset detection runs through the TWL5031 ACI block, which has no
+driver yet, so the card has no jack.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ sound/soc/ti/Kconfig  |  13 ++
+ sound/soc/ti/Makefile |   2 +
+ sound/soc/ti/n950.c   | 308 ++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 323 insertions(+)
+ create mode 100644 sound/soc/ti/n950.c
+
+diff --git a/sound/soc/ti/Kconfig b/sound/soc/ti/Kconfig
+index 3323cf96e..25f59a01e 100644
+--- a/sound/soc/ti/Kconfig
++++ b/sound/soc/ti/Kconfig
+@@ -83,6 +83,19 @@ config SND_SOC_NOKIA_RX51
+ 	  Say Y or M if you want to add support for SoC audio on Nokia RX-51
+ 	  hardware. This is also known as Nokia N900 product.
+ 
++config SND_SOC_NOKIA_N950
++	tristate "SoC Audio support for Nokia N950 and N9"
++	depends on ARCH_OMAP3 && I2C && GPIOLIB
++	depends on TWL4030_CORE
++	select SND_SOC_OMAP_MCBSP
++	select SND_SOC_TWL4030
++	select SND_SOC_TLV320DAC33
++	select SND_SOC_TPA6130A2
++	help
++	  Say Y or M if you want to add support for SoC audio on the Nokia
++	  N950 and N9: TWL5031 for earpiece, loudspeaker and microphones,
++	  TLV320DAC33 with a TPA6140A2 amplifier for the headphones.
++
+ config SND_SOC_OMAP3_PANDORA
+ 	tristate "SoC Audio support for OMAP3 Pandora"
+ 	depends on ARCH_OMAP3
+diff --git a/sound/soc/ti/Makefile b/sound/soc/ti/Makefile
+index 421e13bc0..0c5ce4aba 100644
+--- a/sound/soc/ti/Makefile
++++ b/sound/soc/ti/Makefile
+@@ -26,6 +26,7 @@ obj-$(CONFIG_SND_SOC_OMAP_MCPDM) += snd-soc-omap-mcpdm.o
+ snd-soc-davinci-evm-y := davinci-evm.o
+ snd-soc-n810-y := n810.o
+ snd-soc-rx51-y := rx51.o
++snd-soc-n950-y := n950.o
+ snd-soc-omap3pandora-y := omap3pandora.o
+ snd-soc-omap-twl4030-y := omap-twl4030.o
+ snd-soc-omap-abe-twl6040-y := omap-abe-twl6040.o
+@@ -37,6 +38,7 @@ snd-soc-j721e-evm-y := j721e-evm.o
+ obj-$(CONFIG_SND_SOC_DAVINCI_EVM) += snd-soc-davinci-evm.o
+ obj-$(CONFIG_SND_SOC_NOKIA_N810) += snd-soc-n810.o
+ obj-$(CONFIG_SND_SOC_NOKIA_RX51) += snd-soc-rx51.o
++obj-$(CONFIG_SND_SOC_NOKIA_N950) += snd-soc-n950.o
+ obj-$(CONFIG_SND_SOC_OMAP3_PANDORA) += snd-soc-omap3pandora.o
+ obj-$(CONFIG_SND_SOC_OMAP3_TWL4030) += snd-soc-omap-twl4030.o
+ obj-$(CONFIG_SND_SOC_OMAP_ABE_TWL6040) += snd-soc-omap-abe-twl6040.o
+diff --git a/sound/soc/ti/n950.c b/sound/soc/ti/n950.c
+new file mode 100644
+index 000000000..195347cc7
+--- /dev/null
++++ b/sound/soc/ti/n950.c
+@@ -0,0 +1,308 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * n950.c  --  SoC audio for the Nokia N950 and N9
++ *
++ * Two links on one card, so that DAPM sees the analog connection between
++ * the codecs:
++ *  - McBSP3 <-> TWL5031: earpiece, loudspeaker (through an amplifier
++ *    switched by a TWL GPIO), digital and headset microphones, FM radio in
++ *  - McBSP2 <-> TLV320DAC33: headphones through a TPA6140A2 amplifier.
++ *    The TWL5031's left predriver also feeds the DAC33 line inputs.
++ *
++ * Wiring and settings follow Nokia's dfl61-twl4030.c and
++ * dfl61-tlv320dac33.c (Peter Ujfalusi, Nokia Corporation).
++ * Headset detection goes through the TWL5031 ACI block, which has no
++ * driver yet; there is no jack here.
++ */
++
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <sound/core.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++
++#include "omap-mcbsp.h"
++#include "../codecs/tlv320dac33.h"
++
++struct n950_audio_priv {
++	struct gpio_desc *speaker_amp_gpio;
++};
++
++static int n950_twl_hw_params(struct snd_pcm_substream *substream,
++			      struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	unsigned int fmt;
++
++	switch (params_channels(params)) {
++	case 2: /* Stereo I2S mode */
++		fmt =	SND_SOC_DAIFMT_I2S |
++			SND_SOC_DAIFMT_NB_NF |
++			SND_SOC_DAIFMT_CBP_CFP;
++		break;
++	case 4: /* Four channel TDM mode */
++		fmt =	SND_SOC_DAIFMT_DSP_A |
++			SND_SOC_DAIFMT_IB_NF |
++			SND_SOC_DAIFMT_CBP_CFP;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return snd_soc_runtime_set_dai_fmt(rtd, fmt);
++}
++
++static const struct snd_soc_ops n950_twl_ops = {
++	.hw_params = n950_twl_hw_params,
++};
++
++static int n950_dac33_hw_params(struct snd_pcm_substream *substream,
++				struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++
++	/* The DAC33 runs from the 32 kHz sleep clock, not from MCLK */
++	return snd_soc_dai_set_sysclk(codec_dai, TLV320DAC33_SLEEPCLK, 32768,
++				      SND_SOC_CLOCK_IN);
++}
++
++static const struct snd_soc_ops n950_dac33_ops = {
++	.hw_params = n950_dac33_hw_params,
++};
++
++static int n950_spk_event(struct snd_soc_dapm_widget *w,
++			  struct snd_kcontrol *k, int event)
++{
++	struct snd_soc_card *card = w->dapm->card;
++	struct n950_audio_priv *priv = snd_soc_card_get_drvdata(card);
++
++	gpiod_set_value_cansleep(priv->speaker_amp_gpio,
++				 !!SND_SOC_DAPM_EVENT_ON(event));
++
++	return 0;
++}
++
++static const struct snd_soc_dapm_widget n950_dapm_widgets[] = {
++	SND_SOC_DAPM_SPK("Speaker", n950_spk_event),
++	SND_SOC_DAPM_SPK("Earpiece", NULL),
++	SND_SOC_DAPM_SPK("Hearing Aid", NULL),
++	SND_SOC_DAPM_HP("Headphone", NULL),
++	SND_SOC_DAPM_MIC("Digital Mic", NULL),
++	SND_SOC_DAPM_MIC("Headset Mic", NULL),
++	SND_SOC_DAPM_LINE("FM Radio", NULL),
++};
++
++static const struct snd_soc_dapm_route n950_audio_map[] = {
++	/* TWL5031 outputs */
++	{"Speaker", NULL, "PREDRIVER"},
++	{"Earpiece", NULL, "EARPIECE"},
++	{"Hearing Aid", NULL, "HFL"},
++
++	/* TWL5031 left predriver into the DAC33 line inputs */
++	{"DAC33 LINEL", NULL, "PREDRIVEL"},
++	{"DAC33 LINER", NULL, "PREDRIVEL"},
++
++	/* Headphones: DAC33 line out -> TPA6140A2 */
++	{"TPA6140A2 LEFTIN", NULL, "DAC33 LEFT_LO"},
++	{"TPA6140A2 RIGHTIN", NULL, "DAC33 RIGHT_LO"},
++	{"Headphone", NULL, "TPA6140A2 HPLEFT"},
++	{"Headphone", NULL, "TPA6140A2 HPRIGHT"},
++
++	/* Microphones with their bias */
++	{"DIGIMIC0", NULL, "Digital Mic"},
++	{"Digital Mic", NULL, "Mic Bias 1"},
++	{"HSMIC", NULL, "Headset Mic"},
++	{"Headset Mic", NULL, "Headset Mic Bias"},
++
++	/* FM radio receiver */
++	{"AUXL", NULL, "FM Radio"},
++	{"AUXR", NULL, "FM Radio"},
++};
++
++static const struct snd_kcontrol_new n950_controls[] = {
++	SOC_DAPM_PIN_SWITCH("Speaker"),
++	SOC_DAPM_PIN_SWITCH("Earpiece"),
++	SOC_DAPM_PIN_SWITCH("Hearing Aid"),
++	SOC_DAPM_PIN_SWITCH("Headphone"),
++	SOC_DAPM_PIN_SWITCH("Digital Mic"),
++	SOC_DAPM_PIN_SWITCH("Headset Mic"),
++	SOC_DAPM_PIN_SWITCH("FM Radio"),
++};
++
++static int n950_twl_init(struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_soc_card *card = rtd->card;
++
++	if (omap_mcbsp_st_add_controls(rtd, 3))
++		dev_warn(card->dev, "No McBSP3 sidetone controls\n");
++
++	return 0;
++}
++
++static int n950_dac33_init(struct snd_soc_pcm_runtime *rtd)
++{
++	/* Nokia's limit for the TPA6140A2 (0 to 31) */
++	snd_soc_limit_volume(rtd->card, "TPA6140A2 Headphone Playback Volume",
++			     21);
++
++	return 0;
++}
++
++SND_SOC_DAILINK_DEFS(twl,
++	DAILINK_COMP_ARRAY(COMP_EMPTY()),
++	DAILINK_COMP_ARRAY(COMP_CODEC("twl4030-codec", "twl4030-hifi")),
++	DAILINK_COMP_ARRAY(COMP_EMPTY()));
++
++SND_SOC_DAILINK_DEFS(dac33,
++	DAILINK_COMP_ARRAY(COMP_EMPTY()),
++	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "tlv320dac33-hifi")),
++	DAILINK_COMP_ARRAY(COMP_EMPTY()));
++
++static struct snd_soc_dai_link n950_dai[] = {
++	{
++		.name = "TWL5031",
++		.stream_name = "TWL5031",
++		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
++			   SND_SOC_DAIFMT_CBP_CFP,
++		.init = n950_twl_init,
++		.ops = &n950_twl_ops,
++		SND_SOC_DAILINK_REG(twl),
++	},
++	{
++		.name = "TLV320DAC33",
++		.stream_name = "DAC33",
++		.dai_fmt = SND_SOC_DAIFMT_LEFT_J | SND_SOC_DAIFMT_NB_NF |
++			   SND_SOC_DAIFMT_CBP_CFP,
++		.init = n950_dac33_init,
++		.ops = &n950_dac33_ops,
++		.playback_only = 1,
++		SND_SOC_DAILINK_REG(dac33),
++	},
++};
++
++static struct snd_soc_aux_dev n950_aux_dev[] = {
++	{
++		.dlc = COMP_EMPTY(),
++	},
++};
++
++static struct snd_soc_codec_conf n950_codec_conf[] = {
++	{
++		.dlc = COMP_EMPTY(),
++		.name_prefix = "DAC33",
++	},
++	{
++		.dlc = COMP_EMPTY(),
++		.name_prefix = "TPA6140A2",
++	},
++};
++
++static struct snd_soc_card n950_sound_card = {
++	.name = "N950",
++	.owner = THIS_MODULE,
++	.dai_link = n950_dai,
++	.num_links = ARRAY_SIZE(n950_dai),
++	.aux_dev = n950_aux_dev,
++	.num_aux_devs = ARRAY_SIZE(n950_aux_dev),
++	.codec_conf = n950_codec_conf,
++	.num_configs = ARRAY_SIZE(n950_codec_conf),
++	.fully_routed = true,
++
++	.controls = n950_controls,
++	.num_controls = ARRAY_SIZE(n950_controls),
++	.dapm_widgets = n950_dapm_widgets,
++	.num_dapm_widgets = ARRAY_SIZE(n950_dapm_widgets),
++	.dapm_routes = n950_audio_map,
++	.num_dapm_routes = ARRAY_SIZE(n950_audio_map),
++};
++
++static struct device_node *n950_phandle(struct device *dev, const char *prop,
++					int index)
++{
++	struct device_node *node = of_parse_phandle(dev->of_node, prop, index);
++
++	if (!node)
++		dev_err(dev, "%s[%d] is not provided\n", prop, index);
++
++	return node;
++}
++
++static int n950_audio_probe(struct platform_device *pdev)
++{
++	struct snd_soc_card *card = &n950_sound_card;
++	struct device *dev = &pdev->dev;
++	struct n950_audio_priv *priv;
++	struct device_node *node;
++	int i, err;
++
++	card->dev = dev;
++
++	if (of_property_present(dev->of_node, "model")) {
++		err = snd_soc_of_parse_card_name(card, "model");
++		if (err)
++			return err;
++	}
++
++	/* nokia,cpu-dai: McBSP for the TWL5031, then for the DAC33 */
++	for (i = 0; i < ARRAY_SIZE(n950_dai); i++) {
++		node = n950_phandle(dev, "nokia,cpu-dai", i);
++		if (!node)
++			return -EINVAL;
++		n950_dai[i].cpus->of_node = node;
++		n950_dai[i].platforms->of_node = node;
++	}
++
++	node = n950_phandle(dev, "nokia,audio-codec", 0);
++	if (!node)
++		return -EINVAL;
++	n950_dai[1].codecs->name = NULL;
++	n950_dai[1].codecs->of_node = node;
++	n950_codec_conf[0].dlc.of_node = node;
++
++	node = n950_phandle(dev, "nokia,headphone-amplifier", 0);
++	if (!node)
++		return -EINVAL;
++	n950_aux_dev[0].dlc.of_node = node;
++	n950_codec_conf[1].dlc.of_node = node;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->speaker_amp_gpio = devm_gpiod_get(dev, "speaker-amplifier",
++						GPIOD_OUT_LOW);
++	if (IS_ERR(priv->speaker_amp_gpio))
++		return dev_err_probe(dev, PTR_ERR(priv->speaker_amp_gpio),
++				     "could not get speaker amplifier gpio\n");
++
++	snd_soc_card_set_drvdata(card, priv);
++
++	err = devm_snd_soc_register_card(dev, card);
++	if (err)
++		return dev_err_probe(dev, err, "could not register the card\n");
++
++	return 0;
++}
++
++static const struct of_device_id n950_audio_of_match[] = {
++	{ .compatible = "nokia,n950-audio", },
++	{},
++};
++MODULE_DEVICE_TABLE(of, n950_audio_of_match);
++
++static struct platform_driver n950_audio_driver = {
++	.driver = {
++		.name = "n950-audio",
++		.of_match_table = n950_audio_of_match,
++	},
++	.probe = n950_audio_probe,
++};
++
++module_platform_driver(n950_audio_driver);
++
++MODULE_DESCRIPTION("ALSA SoC Nokia N950 and N9");
++MODULE_LICENSE("GPL");
+-- 
+2.56.0
+

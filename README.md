@@ -16,22 +16,25 @@ and boot it.
 | `kernel/build.sh` | fetches the tree, applies the patches, builds zImage, the N950 device tree and modules |
 | `docs/` | hardware status, boot paths, test plan |
 
-## Plan
+## Status
 
-1. Device tree nodes for the hardware that has drivers already: touchscreen,
-   LP5523 LEDs, bq24153a charger, bq27521 fuel gauge, AK8974 compass,
-   accelerometer through IIO, TLV320DAC33, TPA6140A2, OneNAND read-only
-   (so that the boot loader is never writable from Leste), ramoops.
-2. Small driver changes: device tree matching for TLV320DAC33 and the
-   BH1770GLC proximity/light sensor.
-3. The display: the OMAP DSI FIFO workaround for command-mode panels with
-   manual updates (Sebastian Reichel's), orientation of the panel.
-4. Audio: a machine driver for TWL5031, TLV320DAC33 and TPA6140A2.
-5. GPS (BCM4751): a driver in the kernel's GNSS subsystem (power, reset,
-   the serial link as `/dev/gnss0`). The chip's protocol is proprietary and
-   has no free implementation, so positions do not arrive with this alone.
-6. Booting: tethered over USB into RAM first (nothing is flashed), later
-   ubiboot from the eMMC's fourth partition.
+| Part | State |
+| --- | --- |
+| Display | OMAP DSI FIFO thresholds for the manually updated panel (`0001`), panel orientation from the device tree and the 854 visible lines of the Himalaya panel (`0002`, `0003`) |
+| Touchscreen, LEDs, sensors, fuel gauge | device tree for the maXTouch, LP5523, LIS302DL accelerometer, AK8974 compass, bq27521; OneNAND read-only so the boot loader is never writable from Leste (`0004`) |
+| Proximity and light | BH1770GLC/SFH7770 device tree support and node (`0005`, `0006`) |
+| Audio | TLV320DAC33 device tree support, a machine driver for TWL5031 + TLV320DAC33 + TPA6140A2 on one card, device tree nodes (`0007` to `0011`). No headset detection: that runs through the TWL5031 ACI block, which has no driver. |
+| GPS (BCM4751) | in progress, see below |
+| Charger (bq24153a) | left out on purpose until it can be tested on the phone |
+
+GPS: the BCM4751's protocol is proprietary and has no free implementation.
+The driver being written here offers Nokia's own interface
+(`/dev/bcm4751-gps`, `enable`/`hostreq`/`wakeup` in sysfs), so that
+Harmattan's GPS stack from the MeeGo partition might be run under Leste.
+Whether that works is open until it is tried on the phone.
+
+Booting: tethered over USB into RAM first (nothing is flashed), later
+ubiboot with Leste on its own partition next to Harmattan.
 
 Firmware and calibration data from Harmattan (WLAN NVS, Bluetooth
 `ti1273.bin`, touchscreen configuration) are never part of this repository.
