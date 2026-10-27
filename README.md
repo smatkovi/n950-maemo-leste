@@ -40,8 +40,9 @@ this way is open until it is tried on the phone.
 Booting: ubiboot with Leste on its own partition (p4, 4 GiB, taken from
 MyDocs) next to Harmattan, see [docs/install.md](docs/install.md). The file
 systems ubiboot reads get exactly the ext4 features of Harmattan's own root
-partition, since ubiboot's 2.6.32 kernel mounts nothing newer. A tethered
-boot into RAM (`flasher -k`, nothing flashed) works for a first test too.
+partition, since ubiboot's 2.6.32 kernel mounts nothing newer. For a first test,
+a tethered boot into RAM (`flasher -k`, nothing flashed) needs no
+partition at all.
 
 Firmware and calibration data from Harmattan (WLAN NVS, Bluetooth
 `ti1273.bin`, touchscreen configuration) are never part of this repository.
