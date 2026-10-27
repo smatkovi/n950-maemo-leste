@@ -17,6 +17,7 @@ and boot it.
 | `rootfs/build.sh` | Leste's root file system for partition 4: Leste's N900 image (same SoC family) with the N900 packages swapped for `hildon-meta-n950`, this kernel, `rootfs/overlay` (USB network, Wi-Fi/Bluetooth files from Harmattan, X for the command-mode panel) |
 | `install/n950-install.sh` | from a PC, on the eMMC as ubiboot exports it: shrinks MyDocs, adds partition 4 with Leste, makes Harmattan's /home if missing, adds Leste to `ubiboot.conf` |
 | `docs/install.md` | the layout, what ubiboot needs, the steps |
+| `gps/` | GPS through Harmattan's `nped` and `positioningd` in a chroot, bridged to gpsd (`harmattan-gps`, `positioningd-gpsd.py`) |
 
 ## Status
 
@@ -50,10 +51,11 @@ itself) needs from Leste, from reading its binary:
 - Harmattan's own libraries throughout (its loader and eglibc 2.10), so
   it runs in a chroot of Harmattan's partition.
 
-It hands out positions over its socket `/var/run/nped/nped.socket`
-(Harmattan's `positioningd` is the client there); its D-Bus name only
-serves network-initiated SUPL. The socket protocol is not decoded yet, so
-there is no bridge to gpsd so far.
+It hands out positions over its socket `/var/run/nped/nped.socket` to
+Harmattan's `positioningd`; its D-Bus name only serves network-initiated
+SUPL. So the bridge to gpsd talks to `positioningd` instead, whose client
+interface is open (Harmattan's QtMobility Location): `gps/`, see
+[gps/README.md](gps/README.md).
 
 Booting: ubiboot with Leste on its own partition (p4, 4 GiB, taken from
 MyDocs) next to Harmattan, see [docs/install.md](docs/install.md). The file

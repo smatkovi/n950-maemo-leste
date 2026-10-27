@@ -162,6 +162,11 @@ in_target "dpkg-divert --quiet --local --rename --add /lib/firmware/ti-connectiv
 
 log "N950 files (rootfs/overlay)"
 sudo -n rsync -rlpt --chown=root:root "$REPO/rootfs/overlay/" "$DST/"
+# GPS through Harmattan's stack (gps/README.md), started by hand
+sudo -n install -D -m 755 "$REPO/gps/positioningd-gpsd.py" "$DST/usr/lib/n950-gps/positioningd-gpsd.py"
+sudo -n install -D -m 755 "$REPO/gps/harmattan-gps" "$DST/usr/sbin/harmattan-gps"
+sudo -n install -D -m 755 "$REPO/gps/harmattan-gps.initd" "$DST/etc/init.d/harmattan-gps"
+sudo -n install -D -m 644 "$REPO/gps/harmattan-gps.conf" "$DST/etc/dbus-1/system.d/harmattan-gps.conf"
 in_target "rc-update add n950-firmware boot && rc-update add n950-usbnet default"
 in_target "depmod $KREL"
 in_target "rm /usr/bin/udevadm && dpkg-divert --quiet --local --rename --remove /usr/bin/udevadm &&

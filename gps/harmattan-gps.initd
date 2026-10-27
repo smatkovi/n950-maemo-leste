@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# The N950's GPS through Harmattan's own positioning stack (harmattan-gps).
+# Not started at boot: while it runs the GPS is on.
+
+description="N950 GPS from Harmattan's nped and positioningd, for gpsd"
+
+depend() {
+	need dbus gpsd
+	after ofono
+}
+
+start() {
+	ebegin "Starting Harmattan's GPS stack"
+	/usr/sbin/harmattan-gps start
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping Harmattan's GPS stack"
+	/usr/sbin/harmattan-gps stop
+	eend $?
+}

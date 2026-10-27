@@ -1,0 +1,103 @@
+#!/bin/sh
+# harmattan-gps start|stop: the N950's GPS through Harmattan's own stack.
+#
+# Nothing free turns the BCM4751's data into positions; Harmattan's nped
+# does (Nokia's positioning engine with Broadcom's), and positioningd hands
+# the positions to applications. Both run unchanged here, in a chroot of
+# the Harmattan partition (read only; their /var, /tmp and /home in
+# memory), on Leste's kernel with the bcm4751-gps driver (patch 0013).
+# positioningd-gpsd asks positioningd for positions like a QtLocation
+# application and passes them to gpsd as NMEA.
+#
+# Only nped needs a change: it knows the GPS's sysfs directory by its
+# 2.6.32 name, 3-01fa (Linux 6.18: 3-a1fa); a patched copy of the user's
+# own nped is bound over it, Harmattan's partition stays untouched.
+# Untested on the phone.
+set -e
+PART=${HARMATTAN_PART:-/dev/mmcblk1p2}
+R=/run/harmattan-gps
+ROOT=$R/root
+BUS=unix:path=$ROOT/tmp/session-bus
+LINK=$R/nmea
+
+in_root() {
+	# in_root PIDFILE PROGRAM [ARGS]: a daemon inside the chroot
+	pidfile=$1
+	shift
+	start-stop-daemon --start --background --make-pidfile --pidfile "$pidfile" \
+	    --chroot "$ROOT" --startas /usr/bin/env -- -i HOME=/home/user \
+	    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+	    DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/session-bus "$@"
+}
+
+start() {
+	mkdir -p "$ROOT"
+	mountpoint -q "$ROOT" || mount -o ro "$PART" "$ROOT"
+	[ -x "$ROOT/usr/bin/nped" ] && [ -x "$ROOT/usr/bin/positioningd" ] || {
+		echo "harmattan-gps: no nped or positioningd on $PART" >&2
+		exit 1
+	}
+	for d in dev proc sys; do
+		mountpoint -q "$ROOT/$d" || mount --rbind "/$d" "$ROOT/$d"
+	done
+	# Harmattan's /var is on the OneNAND and its /home on p3: in memory
+	for d in var tmp home; do
+		mountpoint -q "$ROOT/$d" || mount -t tmpfs -o mode=755 tmpfs "$ROOT/$d"
+	done
+	chmod 1777 "$ROOT/tmp"
+	mkdir -p "$ROOT/var/run/dbus" "$ROOT/var/run/nped" "$ROOT/var/lib" \
+	    "$ROOT/var/log" "$ROOT/home/user"
+	# The system bus is Leste's (nped's name: /etc/dbus-1/system.d/harmattan-gps.conf)
+	mountpoint -q "$ROOT/var/run/dbus" || mount --bind /run/dbus "$ROOT/var/run/dbus"
+
+	if [ ! -e "$R/nped" ]; then
+		python3 - "$ROOT/usr/bin/nped" "$R/nped" <<'EOF'
+import sys
+data = open(sys.argv[1], 'rb').read()
+n = data.count(b'/3-01fa/')
+if not n:
+    sys.exit('harmattan-gps: nped names no 3-01fa')
+open(sys.argv[2], 'wb').write(data.replace(b'/3-01fa/', b'/3-a1fa/'))
+print('harmattan-gps: nped: %d paths 3-01fa -> 3-a1fa' % n)
+EOF
+		chmod 755 "$R/nped"
+	fi
+	mountpoint -q "$ROOT/usr/bin/nped" || mount --bind "$R/nped" "$ROOT/usr/bin/nped"
+
+	modprobe bcm4751-gps 2> /dev/null || true
+	# positioningd's session bus; it starts positioningd on demand (D-Bus
+	# activation from Harmattan's service files)
+	in_root "$R/dbus.pid" /usr/bin/dbus-daemon --session --nofork \
+	    --address=unix:path=/tmp/session-bus
+	sleep 1
+	in_root "$R/nped.pid" /usr/bin/nped
+	start-stop-daemon --start --background --make-pidfile --pidfile "$R/bridge.pid" \
+	    --exec /usr/bin/python3 -- /usr/lib/n950-gps/positioningd-gpsd.py "$BUS" "$LINK"
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		[ -e "$LINK" ] && break
+		sleep 1
+	done
+	gpsdctl add "$LINK" || echo "harmattan-gps: gpsd did not take $LINK" >&2
+}
+
+stop() {
+	[ -e "$LINK" ] && gpsdctl remove "$LINK" 2> /dev/null
+	for p in bridge nped dbus; do
+		[ -f "$R/$p.pid" ] && start-stop-daemon --stop --quiet --pidfile "$R/$p.pid" \
+		    --retry 5 --remove-pidfile || true
+	done
+	# whatever else runs in the chroot (positioningd, gconfd, ...)
+	for p in /proc/[0-9]*; do
+		[ "$(readlink "$p/root" 2>/dev/null)" = "$ROOT" ] && kill "${p#/proc/}" 2>/dev/null
+	done
+	sleep 1
+	rm -f "$LINK"
+	mountpoint -q "$ROOT" && umount -R "$ROOT"
+	return 0
+}
+
+case $1 in
+start) start ;;
+stop) stop ;;
+*) echo "usage: harmattan-gps start|stop" >&2; exit 2 ;;
+esac
