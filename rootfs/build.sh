@@ -154,6 +154,16 @@ in_target "apt-get -q -y purge \$(for p in $(echo $N900_PKGS); do
 		dpkg-query -W -f='\${db:Status-Abbrev} \${Package}\n' \$p 2>/dev/null; done |
 		awk '/^ii/ {print \$2}')"
 in_target "apt-get -q -y -o Dpkg::Options::=--force-confold install hildon-meta-n950"
+# The N900's games: Mahjong and openmediaplayer from Leste's extras, Chess
+# and Marbles from their repositories' releases (free pictures in place of
+# Nokia's)
+in_target "apt-get -q -y install osso-mahjong openmediaplayer"
+GH=https://github.com/smatkovi
+for deb in osso-chess-ui/releases/download/v1.8.3-2%2Bleste1/osso-chess-ui_1.8.3-2+leste1_armhf.deb \
+	osso-lmarbles/releases/download/v1.6.38-2%2Bleste1/osso-lmarbles_1.6.38-2+leste1_armhf.deb; do
+	sudo -n curl -sfL -o "$DST/tmp/${deb##*/}" "$GH/$deb"
+	in_target "apt-get -q -y install /tmp/${deb##*/} && rm -f /tmp/${deb##*/}"
+done
 in_target "apt-get -q -y --purge autoremove && apt-get clean"
 in_target "echo 'root:$ROOT_PW' | chpasswd"
 in_target "for s in wl1251-cal gps-nokia-n900; do rc-update del \$s sysinit; rc-update del \$s default; done 2>/dev/null; true"
