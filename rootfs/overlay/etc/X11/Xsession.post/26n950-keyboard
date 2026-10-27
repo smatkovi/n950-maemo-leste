@@ -1,0 +1,19 @@
+# N950 (sourced by Xsession-post): the keyboard with Nokia's own symbols
+# (nokia_vndr/rm-680, from Harmattan's xkeyboard-config), in the layout
+# Leste is set to. xkeyboard-config's rules know no N950 model, so the
+# keymap is compiled here, after the input method's configurator.
+(
+	l=$(gconftool-2 -g /apps/osso/inputmethod/int_kb_layout 2>/dev/null)
+	[ -n "$l" ] || l=$(. /etc/default/keyboard; echo "${XKBLAYOUT%%,*}")
+	grep -q "xkb_symbols \"$l\"" /usr/share/X11/xkb/symbols/nokia_vndr/rm-680 ||
+		l=us
+	xkbcomp -w0 - "$DISPLAY" <<EOF
+xkb_keymap {
+	xkb_keycodes { include "evdev+aliases(qwerty)" };
+	xkb_types { include "complete+nokia" };
+	xkb_compat { include "complete" };
+	xkb_symbols { include "nokia_vndr/rm-680(common)+nokia_vndr/rm-680($l)" };
+	xkb_geometry { include "pc(pc105)" };
+};
+EOF
+) 2> /dev/null

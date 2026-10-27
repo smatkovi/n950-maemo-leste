@@ -15,10 +15,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 53 insertions(+)
 
 diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
-index ddaacb3c8..259be8bca 100644
+index 35e654c19..417e119bd 100644
 --- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
 +++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
-@@ -462,3 +462,56 @@ lcd0_in: endpoint {
+@@ -463,3 +463,56 @@ lcd0_in: endpoint {
  		};
  	};
  };

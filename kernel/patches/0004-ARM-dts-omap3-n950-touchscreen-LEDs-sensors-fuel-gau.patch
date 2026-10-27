@@ -12,8 +12,10 @@ currents, sensor axes) unless noted:
   driver and binding expect, and with its supplies (vaux1, vio) instead
   of keeping those regulators always on.
 - LP5523 on i2c2 0x32: channels 0-5 and 8 at 5 mA (up to 13 mA),
-  external clock, enable gpio_41. Which LED each channel lights is not
-  known, so the channels keep neutral names.
+  external clock, enable gpio_41. Channels 0-5 light the keyboard and
+  8 the white notification LED, as Harmattan's mce drives them; named
+  lp5523:kb1-kb6 like the N900's, which Leste's mce knows, and
+  lp5523:white.
 - bq27521 fuel gauge on i2c2 0x55 (address from elinux.org). The
   bq24153a charger stays out: its charge current settings depend on
   values not known here.
@@ -31,11 +33,11 @@ Untested on hardware.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/arm/boot/dts/ti/omap/omap3-n950.dts | 190 +++++++++++++++++++++--
- 1 file changed, 178 insertions(+), 12 deletions(-)
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 191 +++++++++++++++++++++--
+ 1 file changed, 179 insertions(+), 12 deletions(-)
 
 diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
-index b99f97880..cda90978c 100644
+index b99f97880..2df327700 100644
 --- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
 +++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
 @@ -9,6 +9,7 @@
@@ -46,7 +48,7 @@ index b99f97880..cda90978c 100644
  
  / {
  	model = "Nokia N950";
-@@ -189,18 +190,181 @@ MATRIX_KEY(0x07, 0x07, KEY_R)
+@@ -189,18 +190,182 @@ MATRIX_KEY(0x07, 0x07, KEY_R)
  			 >;
  };
  
@@ -133,8 +135,9 @@ index b99f97880..cda90978c 100644
 +
 +	/*
 +	 * LP5523: channels 0-5 and 8 at 5.0 mA (up to 13 mA), 6 and 7
-+	 * unused, external clock (Nokia's board file); which LED each
-+	 * channel lights is not known here
++	 * unused, external clock (Nokia's board file). Channels 0-5 light
++	 * the keyboard, 8 the white notification LED (Harmattan's mce); named
++	 * like the N900's, which Leste's mce knows
 +	 */
 +	led-controller@32 {
 +		compatible = "national,lp5523";
@@ -146,43 +149,43 @@ index b99f97880..cda90978c 100644
 +
 +		led@0 {
 +			reg = <0>;
-+			chan-name = "lp5523:channel0";
++			chan-name = "lp5523:kb1";
 +			led-cur = /bits/ 8 <50>;
 +			max-cur = /bits/ 8 <130>;
 +		};
 +		led@1 {
 +			reg = <1>;
-+			chan-name = "lp5523:channel1";
++			chan-name = "lp5523:kb2";
 +			led-cur = /bits/ 8 <50>;
 +			max-cur = /bits/ 8 <130>;
 +		};
 +		led@2 {
 +			reg = <2>;
-+			chan-name = "lp5523:channel2";
++			chan-name = "lp5523:kb3";
 +			led-cur = /bits/ 8 <50>;
 +			max-cur = /bits/ 8 <130>;
 +		};
 +		led@3 {
 +			reg = <3>;
-+			chan-name = "lp5523:channel3";
++			chan-name = "lp5523:kb4";
 +			led-cur = /bits/ 8 <50>;
 +			max-cur = /bits/ 8 <130>;
 +		};
 +		led@4 {
 +			reg = <4>;
-+			chan-name = "lp5523:channel4";
++			chan-name = "lp5523:kb5";
 +			led-cur = /bits/ 8 <50>;
 +			max-cur = /bits/ 8 <130>;
 +		};
 +		led@5 {
 +			reg = <5>;
-+			chan-name = "lp5523:channel5";
++			chan-name = "lp5523:kb6";
 +			led-cur = /bits/ 8 <50>;
 +			max-cur = /bits/ 8 <130>;
 +		};
 +		led@8 {
 +			reg = <8>;
-+			chan-name = "lp5523:channel8";
++			chan-name = "lp5523:white";
 +			led-cur = /bits/ 8 <50>;
 +			max-cur = /bits/ 8 <130>;
 +		};
@@ -237,7 +240,7 @@ index b99f97880..cda90978c 100644
  };
  
  &dss {
-@@ -241,10 +405,12 @@ lcd0: panel@0 {
+@@ -241,10 +406,12 @@ lcd0: panel@0 {
  		width-mm = <49>; /* 48.960 mm */
  		height-mm = <88>; /* 88.128 mm */
  

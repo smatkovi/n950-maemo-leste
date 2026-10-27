@@ -23,10 +23,11 @@ and boot it.
 | Part | State |
 | --- | --- |
 | Display | OMAP DSI FIFO thresholds for the manually updated panel (`0001`), panel orientation from the device tree and the 854 visible lines of the Himalaya panel (`0002`, `0003`) |
-| Touchscreen, LEDs, sensors, fuel gauge | device tree for the maXTouch, LP5523, LIS302DL accelerometer, AK8974 compass, bq27521; OneNAND read-only so the boot loader is never writable from Leste (`0004`) |
+| Touchscreen, LEDs, sensors, fuel gauge | device tree for the maXTouch, LP5523 (channels 0-5 the keyboard light, 8 the white LED, as Harmattan's mce drives them), LIS302DL accelerometer, AK8974 compass, bq27521; OneNAND read-only so the boot loader is never writable from Leste (`0004`) |
 | Proximity and light | BH1770GLC/SFH7770 device tree support and node (`0005`, `0006`) |
 | Audio | TLV320DAC33 device tree support, a machine driver for TWL5031 + TLV320DAC33 + TPA6140A2 on one card, device tree nodes (`0007` to `0011`). No headset detection: that runs through the TWL5031 ACI block, which has no driver. |
 | GPS (BCM4751) | driver with Nokia's interface, binding lines for wakeup and HOST_REQ, device tree node (`0012` to `0014`); see below |
+| Keyboard | Nokia's own layouts (`nokia_vndr/rm-680` from Harmattan's xkeyboard-config, whose key codes match the device tree's keymap), compiled at session start in Leste's layout (`rootfs/overlay`); the keyboard light through Leste's mce (`70-n950.ini`) |
 | Charger (bq24153a) | left out on purpose until it can be tested on the phone |
 
 GPS: the BCM4751's protocol is proprietary and has no free implementation.

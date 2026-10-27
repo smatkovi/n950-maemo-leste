@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 25 insertions(+)
 
 diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
-index cda90978c..ddaacb3c8 100644
+index 2df327700..35e654c19 100644
 --- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
 +++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
 @@ -15,6 +15,16 @@ / {
@@ -35,7 +35,7 @@ index cda90978c..ddaacb3c8 100644
  	keys {
  		compatible = "gpio-keys";
  
-@@ -325,6 +335,21 @@ led@8 {
+@@ -326,6 +336,21 @@ led@8 {
  		};
  	};
  

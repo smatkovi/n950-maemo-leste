@@ -13,7 +13,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 17 insertions(+)
 
 diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
-index 259be8bca..61696f899 100644
+index 417e119bd..cf545287a 100644
 --- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
 +++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
 @@ -10,6 +10,7 @@
@@ -24,7 +24,7 @@ index 259be8bca..61696f899 100644
  
  / {
  	model = "Nokia N950";
-@@ -515,3 +516,19 @@ tpa6140a2: amplifier@60 {
+@@ -516,3 +517,19 @@ tpa6140a2: amplifier@60 {
  		Vdd-supply = <&vbat>;
  	};
  };
