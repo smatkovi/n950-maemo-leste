@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 27 Oct 2026 07:56:30 +0100
+Subject: [PATCH] ARM: dts: omap3-n950: headphone jack detection
+
+The N950 detects a plugged headphone jack on TWL5031 GPIO 0 (AvPlugDet),
+low when plugged and pulled up, as Nokia's RM-680 board file and its
+TWL5031 ACI driver have it. A gpio-keys switch reports it as
+SW_HEADPHONE_INSERT, which is what user space (Leste's headphoned,
+PulseAudio) looks for. Headset microphones and the headset button go
+through the ACI block, which has no mainline driver.
+
+Untested on hardware.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index cf545287a..d2c7bf8ea 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -39,6 +39,26 @@ keypad_slide {
+ 			pinctrl-0 = <&keypad_slide_pins>;
+ 		};
+ 	};
++
++	/*
++	 * The headphone jack's plug detection (AvPlugDet) on TWL5031 GPIO 0,
++	 * low when plugged, pulled up (Nokia's board file; its ACI driver
++	 * reads the line the same way). Telling headsets from headphones and
++	 * their button takes that driver, which mainline has not.
++	 */
++	jack {
++		compatible = "gpio-keys";
++		label = "Headphone Jack";
++
++		switch-headphone {
++			label = "Headphone";
++			gpios = <&twl_gpio 0 GPIO_ACTIVE_LOW>;
++			linux,input-type = <EV_SW>;
++			linux,code = <SW_HEADPHONE_INSERT>;
++			debounce-interval = <50>;
++			wakeup-source;
++		};
++	};
+ };
+ 
+ &omap3_pmx_core {
+-- 
+2.56.0
+
