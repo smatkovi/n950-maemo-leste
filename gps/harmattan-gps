@@ -45,8 +45,12 @@ start() {
 		mountpoint -q "$ROOT/$d" || mount -t tmpfs -o mode=755 tmpfs "$ROOT/$d"
 	done
 	chmod 1777 "$ROOT/tmp"
-	mkdir -p "$ROOT/var/run/dbus" "$ROOT/var/run/nped" "$ROOT/var/lib" \
+	mkdir -p "$ROOT/var/run/dbus" "$ROOT/var/run/nped" "$ROOT/var/lib/dbus" \
 	    "$ROOT/var/log" "$ROOT/home/user"
+	# Harmattan's dbus-daemon finds the machine's id only there (its init
+	# job makes it at boot)
+	cp /etc/machine-id "$ROOT/var/lib/dbus/machine-id" 2> /dev/null ||
+	    cp /var/lib/dbus/machine-id "$ROOT/var/lib/dbus/machine-id"
 	# The system bus is Leste's (nped's name: /etc/dbus-1/system.d/harmattan-gps.conf)
 	mountpoint -q "$ROOT/var/run/dbus" || mount --bind /run/dbus "$ROOT/var/run/dbus"
 
@@ -92,7 +96,9 @@ stop() {
 	done
 	sleep 1
 	rm -f "$LINK"
-	mountpoint -q "$ROOT" && umount -R "$ROOT"
+	if mountpoint -q "$ROOT"; then
+		umount -R "$ROOT" 2> /dev/null || umount -lR "$ROOT"
+	fi
 	return 0
 }
 
