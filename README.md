@@ -37,6 +37,23 @@ partition might be run under Leste. Without it the chip can be powered,
 but nothing turns its data into positions. Whether Harmattan's stack runs
 this way is open until it is tried on the phone.
 
+What Harmattan's `nped` (the positioning engine, it computes the fixes
+itself) needs from Leste, from reading its binary:
+
+- the sysfs files of Nokia's driver at `3-01fa`, its old name for the
+  device; under 6.18 it is `3-a1fa`, so `nped` needs that path changed in
+  a local copy. It opens all three files read-write, `hostreq` included,
+  which the driver allows for that reason.
+- a phonet interface `phonet0` (it binds a phonet socket for the modem's
+  assistance and stops without one).
+- Harmattan's own libraries throughout (its loader and eglibc 2.10), so
+  it runs in a chroot of Harmattan's partition.
+
+It hands out positions over its socket `/var/run/nped/nped.socket`
+(Harmattan's `positioningd` is the client there); its D-Bus name only
+serves network-initiated SUPL. The socket protocol is not decoded yet, so
+there is no bridge to gpsd so far.
+
 Booting: ubiboot with Leste on its own partition (p4, 4 GiB, taken from
 MyDocs) next to Harmattan, see [docs/install.md](docs/install.md). The file
 systems ubiboot reads get exactly the ext4 features of Harmattan's own root

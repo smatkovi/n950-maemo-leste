@@ -23,8 +23,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  drivers/misc/Kconfig       |  12 ++
  drivers/misc/Makefile      |   1 +
- drivers/misc/bcm4751-gps.c | 383 +++++++++++++++++++++++++++++++++++++
- 3 files changed, 396 insertions(+)
+ drivers/misc/bcm4751-gps.c | 395 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 408 insertions(+)
  create mode 100644 drivers/misc/bcm4751-gps.c
 
 diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
@@ -64,10 +64,10 @@ index b32a2597d..93e6de1c2 100644
  obj-$(CONFIG_KGDB_TESTS)	+= kgdbts.o
 diff --git a/drivers/misc/bcm4751-gps.c b/drivers/misc/bcm4751-gps.c
 new file mode 100644
-index 000000000..7ac74cc34
+index 000000000..41c6e579d
 --- /dev/null
 +++ b/drivers/misc/bcm4751-gps.c
-@@ -0,0 +1,383 @@
+@@ -0,0 +1,395 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Broadcom BCM4751 GPS on I2C, with the interface of Nokia's driver for the
@@ -80,7 +80,8 @@ index 000000000..7ac74cc34
 + *  - sysfs on the I2C device: "enable" powers the chip (supplies and its
 + *    enable line), "wakeup" drives its wakeup line, "hostreq" reads the
 + *    HOST_REQ line, on which the chip signals data for the host; it can be
-+ *    poll()ed, a rising edge notifies it.
++ *    poll()ed, a rising edge notifies it (and opened read-write, as
++ *    Harmattan's nped does).
 + *
 + * The protocol on top is proprietary and not implemented here.
 + */
@@ -279,7 +280,18 @@ index 000000000..7ac74cc34
 +
 +	return sysfs_emit(buf, "%d\n", val);
 +}
-+static DEVICE_ATTR_RO(hostreq);
++
++/*
++ * HOST_REQ is an input, but Nokia's driver had the file writable and
++ * nped opens it read-write (sysfs refuses that for a read-only file):
++ * writes are accepted and change nothing.
++ */
++static ssize_t hostreq_store(struct device *dev, struct device_attribute *attr,
++			     const char *buf, size_t len)
++{
++	return len;
++}
++static DEVICE_ATTR_RW(hostreq);
 +
 +static ssize_t wakeup_show(struct device *dev, struct device_attribute *attr,
 +			   char *buf)
