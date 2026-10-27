@@ -1,0 +1,71 @@
+#!/sbin/openrc-run
+# USB network to a PC, so that the N950 is reachable over SSH even when the
+# display shows nothing: a CDC ECM gadget (Linux and macOS drivers built in)
+# at 192.168.2.15, the address ubiboot's maintenance mode uses too. A small
+# DHCP server hands the PC 192.168.2.100.
+
+description="USB network to a PC (CDC ECM, 192.168.2.15)"
+
+GADGET=/sys/kernel/config/usb_gadget/n950
+ADDR=192.168.2.15
+PEER=192.168.2.100
+UDHCPD_CONF=/run/n950-usbnet-udhcpd.conf
+UDHCPD_PID=/run/n950-usbnet-udhcpd.pid
+
+depend() {
+	after mount-configfs kmod
+	before ssh
+}
+
+start() {
+	ebegin "Starting the USB network"
+	modprobe libcomposite 2>/dev/null
+	mountpoint -q /sys/kernel/config ||
+		mount -t configfs none /sys/kernel/config || { eend 1; return 1; }
+	udc=""
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		udc=$(ls /sys/class/udc 2>/dev/null | head -n 1)
+		[ -n "$udc" ] && break
+		sleep 1
+	done
+	[ -n "$udc" ] || { eend 1 "no USB device controller (musb)"; return 1; }
+
+	if [ ! -d "$GADGET" ]; then
+		mkdir "$GADGET"
+		echo 0x1d6b > "$GADGET/idVendor"	# Linux Foundation
+		echo 0x0104 > "$GADGET/idProduct"	# Multifunction Composite Gadget
+		mkdir "$GADGET/strings/0x409"
+		echo "Nokia" > "$GADGET/strings/0x409/manufacturer"
+		echo "N950 (Maemo Leste)" > "$GADGET/strings/0x409/product"
+		mkdir "$GADGET/configs/c.1" "$GADGET/configs/c.1/strings/0x409"
+		echo "ECM" > "$GADGET/configs/c.1/strings/0x409/configuration"
+		echo 100 > "$GADGET/configs/c.1/MaxPower"
+		mkdir "$GADGET/functions/ecm.usb0"
+		ln -s "$GADGET/functions/ecm.usb0" "$GADGET/configs/c.1/"
+	fi
+	[ -n "$(cat "$GADGET/UDC")" ] || echo "$udc" > "$GADGET/UDC"
+	ifname=$(cat "$GADGET/functions/ecm.usb0/ifname")
+	ip addr replace "$ADDR/24" dev "$ifname"
+	ip link set "$ifname" up
+
+	cat > "$UDHCPD_CONF" <<EOF
+start $PEER
+end $PEER
+interface $ifname
+max_leases 1
+pidfile $UDHCPD_PID
+lease_file /run/n950-usbnet-udhcpd.leases
+option subnet 255.255.255.0
+EOF
+	touch /run/n950-usbnet-udhcpd.leases
+	busybox udhcpd "$UDHCPD_CONF"
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping the USB network"
+	[ -f "$UDHCPD_PID" ] && kill "$(cat "$UDHCPD_PID")" 2>/dev/null
+	rm -f "$UDHCPD_PID" "$UDHCPD_CONF"
+	[ -d "$GADGET" ] && echo "" > "$GADGET/UDC" 2>/dev/null
+	eend 0
+}

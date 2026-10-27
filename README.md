@@ -14,7 +14,9 @@ and boot it.
 | `kernel/patches/` | patches on Leste's kernel (`leste-upstream-forks/droid4-linux`, branch `leste/maemo-6.18.y`, Linux 6.18) |
 | `kernel/config/n950.config` | config fragment on top of Leste's `linux-image-omap` configuration |
 | `kernel/build.sh` | fetches the tree, applies the patches, builds zImage, the N950 device tree and modules |
-| `docs/` | hardware status, boot paths, test plan |
+| `rootfs/build.sh` | Leste's root file system for partition 4: Leste's N900 image (same SoC family) with the N900 packages swapped for `hildon-meta-n950`, this kernel, `rootfs/overlay` (USB network, Wi-Fi/Bluetooth files from Harmattan, X for the command-mode panel) |
+| `install/n950-install.sh` | from a PC, on the eMMC as ubiboot exports it: shrinks MyDocs, adds partition 4 with Leste, makes Harmattan's /home if missing, adds Leste to `ubiboot.conf` |
+| `docs/install.md` | the layout, what ubiboot needs, the steps |
 
 ## Status
 
@@ -35,8 +37,11 @@ partition might be run under Leste. Without it the chip can be powered,
 but nothing turns its data into positions. Whether Harmattan's stack runs
 this way is open until it is tried on the phone.
 
-Booting: tethered over USB into RAM first (nothing is flashed), later
-ubiboot with Leste on its own partition next to Harmattan.
+Booting: ubiboot with Leste on its own partition (p4, 4 GiB, taken from
+MyDocs) next to Harmattan, see [docs/install.md](docs/install.md). The file
+systems ubiboot reads get exactly the ext4 features of Harmattan's own root
+partition, since ubiboot's 2.6.32 kernel mounts nothing newer. A tethered
+boot into RAM (`flasher -k`, nothing flashed) works for a first test too.
 
 Firmware and calibration data from Harmattan (WLAN NVS, Bluetooth
 `ti1273.bin`, touchscreen configuration) are never part of this repository.
