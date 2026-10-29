@@ -160,10 +160,12 @@ in_target "apt-get -q -y purge \$(for p in $(echo $N900_PKGS); do
 		dpkg-query -W -f='\${db:Status-Abbrev} \${Package}\n' \$p 2>/dev/null; done |
 		awk '/^ii/ {print \$2}')"
 in_target "apt-get -q -y -o Dpkg::Options::=--force-confold install hildon-meta-n950"
-# The N900's games: Mahjong and openmediaplayer from Leste's extras, Chess
-# and Marbles from their repositories' releases (free pictures in place of
-# Nokia's)
-in_target "apt-get -q -y install osso-mahjong openmediaplayer"
+# openmediaplayer from Leste's extras; the N900's games Chess and Marbles
+# from their repositories' releases (free pictures in place of Nokia's).
+# Not Mahjong: it needs osso-sounds-game-mahjong or libre-mahjong-sounds,
+# which excalibur does not have, and its pictures (osso-graphics-game-
+# mahjong) are Nokia's.
+in_target "apt-get -q -y install openmediaplayer"
 GH=https://github.com/smatkovi
 for deb in osso-chess-ui/releases/download/v1.8.3-2%2Bleste1/osso-chess-ui_1.8.3-2+leste1_armhf.deb \
 	osso-lmarbles/releases/download/v1.6.38-2%2Bleste1/osso-lmarbles_1.6.38-2+leste1_armhf.deb; do
