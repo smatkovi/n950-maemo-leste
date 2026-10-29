@@ -1,0 +1,8 @@
+n950-fm (0.1.0) unstable; urgency=medium
+
+  * The Pro1X's FM radio (pro1x-maemo-leste apps/pro1x-fm, cd36dc6) for the
+    N950's WL1273: the receiver switched on by VIDIOC_S_TUNER and off at
+    the end, RDS decoded from raw blocks, the chip's RSSI as the signal,
+    the sound through the TWL5031's AUX inputs (n950-fm-audio).
+
+ -- Sebastian Matkovich <sebastian.matkovich@gmail.com>  Thu, 29 Oct 2026 22:00:00 +0100

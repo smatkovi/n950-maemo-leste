@@ -17,7 +17,9 @@
 #                      in the space MyDocs gives up, before Harmattan's p2
 #   p3 /home           made only if it has no file system (Harmattan does
 #                      not boot without it); with p2's ext4 features
-#   ubiboot.conf       on MyDocs: the "Maemo" entry (OS 5) boots Leste
+#   ubiboot.conf       on MyDocs: the "Maemo" entry (OS 5) boots Leste;
+#                      if the image has /boot/kolibri.bin, KolibriOS is
+#                      the entry's second kernel line
 # p2 (Harmattan) is not touched. The old partition table and the first MiB
 # of the disk are saved to $BACKUP too.
 set -euo pipefail
@@ -161,8 +163,17 @@ if [ -f "$conf" ]; then
 	}
 	set_key G_OS5_NAME '"Maemo"'
 	set_key G_OS5_PARTITION 4
-	set_key G_OS5_NUM 1
-	set_key G_OS5_AUTOBOOT 1
+	# KolibriOS from p4 too (rootfs/build.sh KOLIBRI_BIN=): a second line,
+	# so ubiboot asks which; otherwise straight into Leste
+	if debugfs -R "stat /boot/kolibri.bin" "$(part 4)" 2>/dev/null | grep -q '^Inode:'; then
+		set_key G_OS5_NUM 2
+		set_key G_OS5_AUTOBOOT 0
+		set_key G_OS5_2_LABEL '"KolibriOS (test)"'
+		set_key G_OS5_2_FILE '"/boot/Maemo/boot/kolibri.bin"'
+	else
+		set_key G_OS5_NUM 1
+		set_key G_OS5_AUTOBOOT 1
+	fi
 	set_key G_OS5_AUTOLOCATION '""'
 	set_key G_OS5_INITSCRIPT '"\\/sbin\\/init"'
 	set_key G_OS5_INIT_CMDLINE_FILE '"/boot/Maemo/boot/cmdline"'

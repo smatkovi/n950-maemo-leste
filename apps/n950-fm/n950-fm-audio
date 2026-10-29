@@ -1,0 +1,118 @@
+#!/bin/sh
+# n950-fm-audio -- the N950's FM sound on or off.
+#
+#   n950-fm-audio on | off | status
+#
+# The WL1273's analog FM output is wired to the TWL5031's AUXL and AUXR
+# inputs, the sound card's "FM Radio" (Nokia's audio configuration 4 for
+# the RM-680, dfl61-twl4030.c). What "on" does depends on FM_AUDIO in
+# /etc/default/n950-fm:
+#
+#   loopback  The AUX inputs become the only analog inputs of the
+#             TWL5031's capture (TX1 from the analog side), and a
+#             PulseAudio loopback plays that capture on the default sink:
+#             stereo. Harmattan did the same (its audio policy takes FM
+#             from the TWL5031's capture source, through a loopback
+#             stream "fm_loopback").
+#   bypass    Inside the codecs, without PulseAudio: the TWL5031's analog
+#             loopback (Left1/Right1) to its predrivers, which drive the
+#             loudspeaker and, from the left one, the DAC33's line inputs
+#             for the headphones: mono.
+#
+# "on" saves the card's mixer first and "off" puts it back, so the
+# microphones are as they were. Run as the session's user (PulseAudio).
+# Prints the loopback's module number on "on" (0 for bypass).
+set -u
+
+CARD=${N950_FM_CARD:-N950}
+FM_AUDIO=loopback
+[ -r /etc/default/n950-fm ] && . /etc/default/n950-fm
+STATE=${XDG_RUNTIME_DIR:-/tmp}/n950-fm-audio-$(id -u)
+
+say() { echo "n950-fm-audio: $*" >&2; }
+
+cset() {
+	amixer -q -c "$CARD" cset name="$1" "$2" > /dev/null 2>&1 ||
+		say "cannot set '$1' to $2"
+}
+
+# the TWL5031's capture from the AUX inputs only
+aux_capture() {
+	cset 'FM Radio Switch' on
+	cset 'Analog Left Main Mic Capture Switch' off
+	cset 'Analog Left Headset Mic Capture Switch' off
+	cset 'Analog Left Carkit Mic Capture Switch' off
+	cset 'Analog Right Sub Mic Capture Switch' off
+	cset 'Analog Left AUXL Capture Switch' on
+	cset 'Analog Right AUXR Capture Switch' on
+}
+
+# the first ALSA capture source of PulseAudio (the TWL5031's)
+pa_source() {
+	pactl list short sources 2>/dev/null |
+		awk '$2 ~ /^alsa_input\./ { print $2; exit }'
+}
+
+on() {
+	if [ -e "$STATE/mixer" ]; then
+		say "already on"
+		cat "$STATE/module" 2>/dev/null || echo 0
+		return 0
+	fi
+	amixer -c "$CARD" info > /dev/null 2>&1 ||
+		{ say "no sound card $CARD"; return 1; }
+	mkdir -p "$STATE" || return 1
+	alsactl -f "$STATE/mixer" store "$CARD" ||
+		{ say "cannot save the mixer of $CARD"; return 1; }
+	aux_capture
+	case $FM_AUDIO in
+	bypass)
+		cset 'Left1 Analog Loopback Switch' on
+		cset 'Right1 Analog Loopback Switch' on
+		cset 'PredriveL Mixer AudioL1' on
+		cset 'PredriveR Mixer AudioR1' on
+		cset 'DAC33 Analog Left Bypass Switch' on
+		cset 'DAC33 Analog Right Bypass Switch' on
+		echo 0 > "$STATE/module"
+		;;
+	*)
+		cset 'TX1 Capture Route' Analog
+		src=$(pa_source)
+		if [ -z "$src" ]; then
+			say "PulseAudio has no ALSA capture source"
+			off
+			return 1
+		fi
+		mod=$(pactl load-module module-loopback source="$src" \
+			latency_msec=100 source_dont_move=true \
+			sink_input_properties=media.name=fm_loopback) ||
+			{ say "the loopback from $src does not start"; off; return 1; }
+		echo "$mod" > "$STATE/module"
+		;;
+	esac
+	cat "$STATE/module"
+}
+
+off() {
+	mod=$(cat "$STATE/module" 2>/dev/null)
+	[ -n "$mod" ] && [ "$mod" != 0 ] && pactl unload-module "$mod" 2>/dev/null
+	[ -e "$STATE/mixer" ] && alsactl -f "$STATE/mixer" restore "$CARD" 2>/dev/null
+	rm -rf "$STATE"
+	return 0
+}
+
+case ${1:-} in
+on) on ;;
+off) off ;;
+status)
+	if [ -e "$STATE/mixer" ]; then
+		echo "on ($FM_AUDIO, loopback module $(cat "$STATE/module" 2>/dev/null))"
+	else
+		echo off
+	fi
+	;;
+*)
+	echo "usage: n950-fm-audio on|off|status" >&2
+	exit 2
+	;;
+esac

@@ -1,0 +1,197 @@
+#!/usr/bin/python3
+"""n950-fm-test -- the N950's FM receiver (/dev/radio0) from a shell.
+
+  n950-fm-test [-d DEV] [-t SECONDS] [-k] MHZ      tune, then report
+  n950-fm-test [-d DEV] [-t SECONDS] [-k] up|down  seek, then report
+  n950-fm-test [-d DEV] [-k] scan                  seek up through the band
+  n950-fm-test [-d DEV] off                        switch the receiver off
+
+Switches the receiver on (VIDIOC_S_TUNER: radio-wl1273 keeps the chip in
+reset until then), prints the frequency, the chip's RSSI level, stereo,
+RDS and the RDS station name and text once a second, and switches the
+receiver off again at the end (a volume of 0) unless -k keeps it on.
+The sound is separate: n950-fm-audio on|off. The headphone cable is the
+antenna. Needs radio-wl1273 (kernel/patches 0016-0019).
+"""
+import argparse, ctypes, errno, fcntl, os, sys, time
+
+def _ioc(d, nr, size):
+    return (d << 30) | (size << 16) | (ord('V') << 8) | nr
+
+class Frequency(ctypes.Structure):
+    _fields_ = [('tuner', ctypes.c_uint32), ('type', ctypes.c_uint32),
+                ('frequency', ctypes.c_uint32), ('reserved', ctypes.c_uint32 * 8)]
+
+class Tuner(ctypes.Structure):
+    _fields_ = [('index', ctypes.c_uint32), ('name', ctypes.c_char * 32),
+                ('type', ctypes.c_uint32), ('capability', ctypes.c_uint32),
+                ('rangelow', ctypes.c_uint32), ('rangehigh', ctypes.c_uint32),
+                ('rxsubchans', ctypes.c_uint32), ('audmode', ctypes.c_uint32),
+                ('signal', ctypes.c_int32), ('afc', ctypes.c_int32),
+                ('reserved', ctypes.c_uint32 * 4)]
+
+class Seek(ctypes.Structure):
+    _fields_ = [('tuner', ctypes.c_uint32), ('type', ctypes.c_uint32),
+                ('seek_upward', ctypes.c_uint32), ('wrap_around', ctypes.c_uint32),
+                ('spacing', ctypes.c_uint32), ('rangelow', ctypes.c_uint32),
+                ('rangehigh', ctypes.c_uint32), ('reserved', ctypes.c_uint32 * 5)]
+
+class Control(ctypes.Structure):
+    _fields_ = [('id', ctypes.c_uint32), ('value', ctypes.c_int32)]
+
+RW, W = 3, 1
+S_CTRL = _ioc(RW, 28, ctypes.sizeof(Control))
+G_TUNER = _ioc(RW, 29, ctypes.sizeof(Tuner))
+S_TUNER = _ioc(W, 30, ctypes.sizeof(Tuner))
+G_FREQUENCY = _ioc(RW, 56, ctypes.sizeof(Frequency))
+S_FREQUENCY = _ioc(W, 57, ctypes.sizeof(Frequency))
+S_HW_FREQ_SEEK = _ioc(W, 82, ctypes.sizeof(Seek))
+TUNER_RADIO = 1
+MODE_STEREO = 1
+SUB_STEREO, SUB_RDS = 0x2, 0x10
+CID_AUDIO_VOLUME, CID_AUDIO_MUTE = 0x00980905, 0x00980909
+# struct v4l2_rds_data: lsb, msb, block (ID in bits 0-2, 0x80 an error)
+BLOCK_MSK, BLOCK_C, BLOCK_C_ALT, BLOCK_D, BLOCK_ERROR = 0x7, 2, 4, 3, 0x80
+
+def ctrl(fd, cid, value):
+    fcntl.ioctl(fd, S_CTRL, Control(id=cid, value=value))
+
+def power_on(fd):
+    fcntl.ioctl(fd, S_TUNER, Tuner(index=0, audmode=MODE_STEREO,
+                                   rxsubchans=SUB_STEREO | SUB_RDS))
+
+def power_off(fd):
+    # radio-wl1273: a volume of 0 puts the chip back into reset; the
+    # control only acts on a change
+    ctrl(fd, CID_AUDIO_VOLUME, 1)
+    ctrl(fd, CID_AUDIO_VOLUME, 0)
+
+def freq(fd):
+    f = Frequency(type=TUNER_RADIO)
+    fcntl.ioctl(fd, G_FREQUENCY, f, True)
+    return f.frequency / 16000
+
+def tune(fd, mhz):
+    fcntl.ioctl(fd, S_FREQUENCY, Frequency(type=TUNER_RADIO, frequency=round(mhz * 16000)))
+
+def seek(fd, up):
+    """False when the receiver went round the band and found nothing"""
+    try:
+        fcntl.ioctl(fd, S_HW_FREQ_SEEK, Seek(type=TUNER_RADIO, seek_upward=up, wrap_around=1))
+    except OSError as e:
+        if e.errno != errno.ENODATA:
+            raise
+        print('no station found', flush=True)
+        return False
+    return True
+
+class Rds:
+    """the station name (groups 0A/0B) and the radio text (2A/2B)"""
+    def __init__(self, fd):
+        self.fd, self.blk, self.have = fd, [0] * 4, 0
+        self.ps, self.rt, self.ab, self.blocks = [' '] * 8, [' '] * 64, None, 0
+
+    def group(self):
+        b, c, d = self.blk[1], self.blk[2], self.blk[3]
+        kind, version_b = b >> 12, b >> 11 & 1
+        chars = lambda *w: [chr(x >> 8) + chr(x & 0xff) for x in w]
+        if kind == 0:
+            i = (b & 3) * 2
+            self.ps[i:i + 2] = chars(d)[0]
+        elif kind == 2:
+            seg, ab = b & 15, b >> 4 & 1
+            if ab != self.ab:
+                self.rt, self.ab = [' '] * 64, ab
+            if not version_b:
+                self.rt[seg * 4:seg * 4 + 4] = ''.join(chars(c, d))
+            else:
+                self.rt[seg * 2:seg * 2 + 2] = chars(d)[0]
+
+    def block(self, lsb, msb, blk):
+        bid = blk & BLOCK_MSK
+        if blk & BLOCK_ERROR or bid > BLOCK_C_ALT:
+            self.have = 0
+            return
+        if bid == BLOCK_C_ALT:
+            bid = BLOCK_C
+        if bid == 0:
+            self.have = 0
+        elif not self.have & 1 << (bid - 1):
+            self.have = 0
+            return
+        self.blk[bid] = msb << 8 | lsb
+        self.have |= 1 << bid
+        if bid == BLOCK_D and self.have == 0xf:
+            self.group()
+
+    def poll(self):
+        while True:
+            try:
+                data = os.read(self.fd, 3 * 32)
+            except OSError:
+                return
+            for i in range(0, len(data) - 2, 3):
+                self.block(*data[i:i + 3])
+                self.blocks += 1
+            if len(data) < 3 * 32:
+                return
+
+    def text(self, chars):
+        s = ''.join(chars).split('\r')[0]
+        return ''.join(ch if ' ' <= ch < '\x7f' else '?' for ch in s).strip()
+
+def report(fd, rds):
+    t = Tuner()
+    fcntl.ioctl(fd, G_TUNER, t, True)
+    rds.poll()
+    print('%6.1f MHz  rssi %4d  %s%s  %-8s  %s  (%d RDS blocks)' % (
+        freq(fd), t.signal,
+        'stereo' if t.rxsubchans & SUB_STEREO else 'mono  ',
+        ' RDS' if t.rxsubchans & SUB_RDS else '    ',
+        rds.text(rds.ps), rds.text(rds.rt), rds.blocks), flush=True)
+
+def main():
+    a = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    a.add_argument('-d', default='/dev/radio0')
+    a.add_argument('-t', type=int, default=10, help='seconds to report')
+    a.add_argument('-k', action='store_true', help='keep the receiver on at the end')
+    a.add_argument('what', help='MHz, up, down, scan or off')
+    o = a.parse_args()
+    fd = os.open(o.d, os.O_RDWR)
+    if o.what == 'off':
+        power_off(fd)
+        return
+    t0 = time.monotonic()
+    power_on(fd)
+    print('receiver on after %.1f s' % (time.monotonic() - t0), flush=True)
+    ctrl(fd, CID_AUDIO_MUTE, 0)
+    # RDS is on now: radio-wl1273 counts its readers when they open
+    rds = Rds(os.open(o.d, os.O_RDONLY | os.O_NONBLOCK))
+    try:
+        if o.what == 'scan':
+            tune(fd, 87.5)
+            seen = set()
+            while seek(fd, 1):
+                f = freq(fd)
+                if f in seen:
+                    break
+                seen.add(f)
+                time.sleep(1)
+                report(fd, rds)
+            return
+        if o.what in ('up', 'down'):
+            seek(fd, o.what == 'up')
+        else:
+            tune(fd, float(o.what))
+        for _ in range(o.t):
+            time.sleep(1)
+            report(fd, rds)
+    finally:
+        if not o.k:
+            power_off(fd)
+
+if __name__ == '__main__':
+    try:
+        main()
+    except OSError as e:
+        sys.exit('n950-fm-test: %s' % e)

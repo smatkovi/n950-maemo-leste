@@ -18,6 +18,7 @@ and boot it.
 | `install/n950-install.sh` | from a PC, on the eMMC as ubiboot exports it: shrinks MyDocs, adds partition 4 with Leste, makes Harmattan's /home if missing, adds Leste to `ubiboot.conf` |
 | `docs/install.md` | the layout, what ubiboot needs, the steps |
 | `gps/` | GPS through Harmattan's `nped` and `positioningd` in a chroot, bridged to gpsd (`harmattan-gps`, `positioningd-gpsd.py`) |
+| `apps/n950-fm/` | FM radio for Hildon (the Pro1X's `pro1x-fm` for the N950's receiver), `n950-fm-audio` for its sound, `n950-fm-test` for a shell; `apps/build-deb.sh` builds it as an armhf .deb in a chroot of a Leste image |
 
 ## Status
 
@@ -29,6 +30,7 @@ and boot it.
 | Audio | TLV320DAC33 device tree support, a machine driver for TWL5031 + TLV320DAC33 + TPA6140A2 on one card, device tree nodes (`0007` to `0011`). Headphone plug detection as a switch (`SW_HEADPHONE_INSERT`, TWL5031 GPIO 0 as in Nokia's board file, `0015`); headset microphones and the headset button run through the TWL5031 ACI block, which has no mainline driver. |
 | GPS (BCM4751) | driver with Nokia's interface, binding lines for wakeup and HOST_REQ, device tree node (`0012` to `0014`); see below |
 | Keyboard | Nokia's own layouts (`nokia_vndr/rm-680` from Harmattan's xkeyboard-config, whose key codes match the device tree's keymap), compiled at session start in Leste's layout (`rootfs/overlay`); the keyboard light through Leste's mce (`70-n950.ini`) |
+| FM radio (WL1273) | `radio-wl1273` back from v6.17 with device tree support, the N950's node: I2C3 0x22, interrupt GPIO 43, reset GPIO 179 (`0016` to `0019`); `/dev/radio0`. The sound: the chip's analog output into the TWL5031's AUXL/AUXR (Nokia's audio configuration 4), recorded by the TWL5031 and played through a PulseAudio loopback (`n950-fm-audio`), as Harmattan's audio policy does; the receiver's firmware patch comes from Harmattan at first boot |
 | Charger (bq24153a) | left out on purpose until it can be tested on the phone |
 
 GPS: the BCM4751's protocol is proprietary and has no free implementation.

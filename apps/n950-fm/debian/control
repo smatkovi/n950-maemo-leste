@@ -1,0 +1,19 @@
+Source: n950-fm
+Section: user/multimedia
+Priority: optional
+Maintainer: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Build-Depends: debhelper-compat (= 13), libhildon1-dev, libgtk2.0-dev, gettext, pkg-config
+Standards-Version: 4.6.2
+Homepage: https://github.com/smatkovi/n950-maemo-leste
+Rules-Requires-Root: no
+
+Package: n950-fm
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, alsa-utils, pulseaudio-utils
+Recommends: python3
+Description: FM radio for the Nokia N950
+ The N950's FM receiver (the FM part of its WL1273, /dev/radio0 through
+ radio-wl1273) for Hildon: frequency, seek, mute, signal, stereo, the RDS
+ station name and radio text, saved stations. n950-fm-audio plays the
+ receiver's analog output from the TWL5031's AUX inputs; n950-fm-test
+ tries the receiver from a shell.

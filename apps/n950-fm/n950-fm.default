@@ -1,0 +1,8 @@
+# n950-fm-audio: how the N950's FM sound reaches the speaker or headphones.
+#
+# loopback  the TWL5031 records its AUX inputs (stereo), PulseAudio plays
+#           them on its default sink (as Harmattan did)
+# bypass    inside the codecs, without PulseAudio: the TWL5031's analog
+#           loopback to its predrivers (loudspeaker, and the DAC33's line
+#           inputs for the headphones); mono
+FM_AUDIO=loopback

@@ -1,15 +1,18 @@
 #!/sbin/openrc-run
 # The N950's own calibration and firmware files come from its Harmattan
 # partition (2), never from this image: the Wi-Fi's NVS (calibrated for this
-# board, not the generic one of firmware-ti-connectivity) and the Bluetooth
-# firmware that hci_nokia loads. Copied once, on the first boot; delete the
-# copies to fetch them again.
+# board, not the generic one of firmware-ti-connectivity), the Bluetooth
+# firmware that hci_nokia loads and the FM receiver's patch that
+# radio-wl1273 uploads when it switches the receiver on (it runs without
+# one too). Copied once, on the first boot; delete the copies to fetch
+# them again.
 
-description="Copy the N950's Wi-Fi and Bluetooth files from Harmattan"
+description="Copy the N950's Wi-Fi, Bluetooth and FM files from Harmattan"
 
 HARMATTAN=/dev/mmcblk1p2
 MNT=/run/n950-harmattan
 NVS=/lib/firmware/ti-connectivity/wl1271-nvs.bin
+FM=/lib/firmware/radio-wl1273-fw.bin
 
 depend() {
 	after checkroot.sh mountall.sh
@@ -24,21 +27,23 @@ copy() {
 }
 
 start() {
-	[ -e "$NVS" ] && [ -e /lib/firmware/nokia/ti1273.bin ] && return 0
-	ebegin "Copying the Wi-Fi and Bluetooth files from Harmattan"
+	[ -e "$NVS" ] && [ -e /lib/firmware/nokia/ti1273.bin ] && [ -e "$FM" ] && return 0
+	ebegin "Copying the Wi-Fi, Bluetooth and FM files from Harmattan"
 	mkdir -p "$MNT"
 	if ! mount -o ro "$HARMATTAN" "$MNT"; then
 		eend 1 "cannot mount $HARMATTAN"
 		return 0
 	fi
+	nvs_was=$([ -e "$NVS" ] && echo yes)
 	copy lib/firmware/wl1271-nvs.bin "$NVS"
 	copy lib/firmware/ti1273.bin /lib/firmware/nokia/ti1273.bin
+	copy lib/firmware/radio-wl1273-fw.bin "$FM"
 	umount "$MNT"
 	rmdir "$MNT"
 	# Without Harmattan's NVS the generic one has to do
 	[ -e "$NVS" ] || cp "$NVS.distrib" "$NVS" 2>/dev/null
 	# wlcore read the NVS (or found none) when it probed: probe again
-	if lsmod | grep -q '^wl12xx'; then
+	if [ -z "$nvs_was" ] && lsmod | grep -q '^wl12xx'; then
 		modprobe -r wl12xx && modprobe wl12xx
 	fi
 	eend 0

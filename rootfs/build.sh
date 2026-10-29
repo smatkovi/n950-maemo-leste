@@ -16,6 +16,10 @@
 #
 # Output: $OUT (default $WORK/n950-leste.img), 4 GiB, the size of
 # partition 4 that install/n950-install.sh creates.
+#
+# FM_DEB=<n950-fm .deb> takes apps/n950-fm from a local build instead of
+# its release; KOLIBRI_BIN=<kolibrios-arm's build/n950/kernel.bin> puts
+# KolibriOS at /boot/kolibri.bin, for ubiboot's second "Maemo" entry.
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${WORK:?set WORK=<work directory of kernel/build.sh>}
@@ -24,6 +28,8 @@ OUT=${OUT:-$WORK/n950-leste.img}
 SIZE_SECTORS=${SIZE_SECTORS:-8388608}		# 4 GiB, partition 4
 ROOT_PW=${ROOT_PW:-n950-leste}
 SSH_PUBKEY=${SSH_PUBKEY:-}
+FM_DEB=${FM_DEB:-}
+KOLIBRI_BIN=${KOLIBRI_BIN:-}
 HOSTNAME_N950=${HOSTNAME_N950:-n950}
 KOUT=$WORK/out
 FS_UUID=${FS_UUID:-$(cat /proc/sys/kernel/random/uuid)}
@@ -164,6 +170,14 @@ for deb in osso-chess-ui/releases/download/v1.8.3-2%2Bleste1/osso-chess-ui_1.8.3
 	sudo -n curl -sfL -o "$DST/tmp/${deb##*/}" "$GH/$deb"
 	in_target "apt-get -q -y install /tmp/${deb##*/} && rm -f /tmp/${deb##*/}"
 done
+# The FM radio (apps/n950-fm): its release, or a local build
+FM_URL=$GH/n950-maemo-leste/releases/download/n950-fm-0.1.0/n950-fm_0.1.0_armhf.deb
+if [ -n "$FM_DEB" ]; then
+	sudo -n cp "$FM_DEB" "$DST/tmp/n950-fm.deb"
+else
+	sudo -n curl -sfL -o "$DST/tmp/n950-fm.deb" "$FM_URL"
+fi
+in_target "apt-get -q -y install /tmp/n950-fm.deb && rm -f /tmp/n950-fm.deb"
 in_target "apt-get -q -y --purge autoremove && apt-get clean"
 in_target "echo 'root:$ROOT_PW' | chpasswd"
 in_target "for s in wl1251-cal gps-nokia-n900; do rc-update del \$s sysinit; rc-update del \$s default; done 2>/dev/null; true"
@@ -182,6 +196,11 @@ in_target "depmod $KREL"
 in_target "rm /usr/bin/udevadm && dpkg-divert --quiet --local --rename --remove /usr/bin/udevadm &&
 	rm -f /usr/sbin/policy-rc.d"
 sudo -n mv "$DST/etc/resolv.conf.n950-build" "$DST/etc/resolv.conf"
+
+if [ -n "$KOLIBRI_BIN" ]; then
+	log "KolibriOS at /boot/kolibri.bin (ubiboot starts it like a zImage)"
+	sudo -n install -m 644 "$KOLIBRI_BIN" "$DST/boot/kolibri.bin"
+fi
 
 log "boot command line for ubiboot (/boot/cmdline)"
 # The eMMC is the second controller (mmc2, DT alias mmc1): mmcblk1.
