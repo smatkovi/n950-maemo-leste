@@ -1,0 +1,256 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Thu, 29 Oct 2026 21:33:32 +0100
+Subject: [PATCH 18/19] mfd: wl1273-core: device tree support
+
+The WL1273 FM core only probed with platform data from a board file,
+whose callbacks powered the chip and set its interrupt up. Without
+platform data but with a device tree node ("ti,wl1273-fm") it now takes
+the interrupt the I2C core found and a reset line ("reset-gpios"),
+held asserted until the radio is switched on, as Nokia's board file
+did for the N950 and N9 (low at start, high to enable).
+
+The radio driver switches the chip through wl1273_fm_power(), which
+uses the reset line or the board's callbacks, and no longer assumes
+request_resources() and free_resources() callbacks.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/media/radio/radio-wl1273.c | 48 ++++++++++++++++--------------
+ drivers/mfd/wl1273-core.c          | 33 ++++++++++++++++++--
+ include/linux/mfd/wl1273-core.h    | 22 ++++++++++++++
+ 3 files changed, 79 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/media/radio/radio-wl1273.c b/drivers/media/radio/radio-wl1273.c
+index f55217ccf..8f6f4f5a7 100644
+--- a/drivers/media/radio/radio-wl1273.c
++++ b/drivers/media/radio/radio-wl1273.c
+@@ -545,8 +545,8 @@ static int wl1273_fm_stop(struct wl1273_device *radio)
+ 				"%s: PUPD_SET fails: %d\n", __func__, r);
+ 	}
+ 
+-	if (core->pdata->disable) {
+-		core->pdata->disable();
++	if (wl1273_fm_has_power_control(core)) {
++		wl1273_fm_power(core, false);
+ 		dev_dbg(radio->dev, "Back to reset\n");
+ 	}
+ 
+@@ -556,14 +556,14 @@ static int wl1273_fm_stop(struct wl1273_device *radio)
+ static int wl1273_fm_start(struct wl1273_device *radio, int new_mode)
+ {
+ 	struct wl1273_core *core = radio->core;
+-	struct wl1273_fm_platform_data *pdata = core->pdata;
+ 	struct device *dev = radio->dev;
+ 	int r = -EINVAL;
+ 
+-	if (pdata->enable && core->mode == WL1273_MODE_OFF) {
++	if (wl1273_fm_has_power_control(core) &&
++	    core->mode == WL1273_MODE_OFF) {
+ 		dev_dbg(radio->dev, "Out of reset\n");
+ 
+-		pdata->enable();
++		wl1273_fm_power(core, true);
+ 		msleep(250);
+ 	}
+ 
+@@ -653,8 +653,7 @@ static int wl1273_fm_start(struct wl1273_device *radio, int new_mode)
+ 
+ 	return 0;
+ fail:
+-	if (pdata->disable)
+-		pdata->disable();
++	wl1273_fm_power(core, false);
+ 
+ 	dev_dbg(dev, "%s: return: %d\n", __func__, r);
+ 	return r;
+@@ -1985,7 +1984,8 @@ static void wl1273_fm_radio_remove(struct platform_device *pdev)
+ 	dev_info(&pdev->dev, "%s.\n", __func__);
+ 
+ 	free_irq(core->client->irq, radio);
+-	core->pdata->free_resources();
++	if (core->pdata->free_resources)
++		core->pdata->free_resources();
+ 
+ 	v4l2_ctrl_handler_free(&radio->ctrl_handler);
+ 	video_unregister_device(&radio->videodev);
+@@ -2040,6 +2040,7 @@ static int wl1273_fm_radio_probe(struct platform_device *pdev)
+ 	radio->stereo = true;
+ 	radio->bus_type = "I2C";
+ 
++	/* board files set the interrupt up here, the device tree in the I2C core */
+ 	if (radio->core->pdata->request_resources) {
+ 		r = radio->core->pdata->request_resources(radio->core->client);
+ 		if (r) {
+@@ -2047,22 +2048,24 @@ static int wl1273_fm_radio_probe(struct platform_device *pdev)
+ 				": Cannot get platform data\n");
+ 			goto pdata_err;
+ 		}
++	}
+ 
+-		dev_dbg(radio->dev, "irq: %d\n", radio->core->client->irq);
+-
+-		r = request_threaded_irq(radio->core->client->irq, NULL,
+-					 wl1273_fm_irq_thread_handler,
+-					 IRQF_ONESHOT | IRQF_TRIGGER_FALLING,
+-					 "wl1273-fm", radio);
+-		if (r < 0) {
+-			dev_err(radio->dev, WL1273_FM_DRIVER_NAME
+-				": Unable to register IRQ handler: %d\n", r);
+-			goto err_request_irq;
+-		}
+-	} else {
++	if (radio->core->client->irq <= 0) {
+ 		dev_err(radio->dev, WL1273_FM_DRIVER_NAME ": Core WL1273 IRQ not configured");
+ 		r = -EINVAL;
+-		goto pdata_err;
++		goto err_request_irq;
++	}
++
++	dev_dbg(radio->dev, "irq: %d\n", radio->core->client->irq);
++
++	r = request_threaded_irq(radio->core->client->irq, NULL,
++				 wl1273_fm_irq_thread_handler,
++				 IRQF_ONESHOT | IRQF_TRIGGER_FALLING,
++				 "wl1273-fm", radio);
++	if (r < 0) {
++		dev_err(radio->dev, WL1273_FM_DRIVER_NAME
++			": Unable to register IRQ handler: %d\n", r);
++		goto err_request_irq;
+ 	}
+ 
+ 	init_completion(&radio->busy);
+@@ -2138,7 +2141,8 @@ static int wl1273_fm_radio_probe(struct platform_device *pdev)
+ write_buf_err:
+ 	free_irq(radio->core->client->irq, radio);
+ err_request_irq:
+-	radio->core->pdata->free_resources();
++	if (radio->core->pdata->free_resources)
++		radio->core->pdata->free_resources();
+ pdata_err:
+ 	return r;
+ }
+diff --git a/drivers/mfd/wl1273-core.c b/drivers/mfd/wl1273-core.c
+index 2f185e933..651e97d1d 100644
+--- a/drivers/mfd/wl1273-core.c
++++ b/drivers/mfd/wl1273-core.c
+@@ -7,8 +7,10 @@
+  */
+ 
+ #include <linux/mfd/wl1273-core.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/slab.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ 
+ #define DRIVER_DESC "WL1273 FM Radio Core"
+ 
+@@ -166,7 +168,16 @@ static int wl1273_core_probe(struct i2c_client *client)
+ 
+ 	dev_dbg(&client->dev, "%s\n", __func__);
+ 
+-	if (!pdata) {
++	if (!pdata && client->dev.of_node) {
++		/*
++		 * From the device tree: the receiver only, its interrupt
++		 * from the I2C core, its reset line from "reset-gpios".
++		 */
++		pdata = devm_kzalloc(&client->dev, sizeof(*pdata), GFP_KERNEL);
++		if (!pdata)
++			return -ENOMEM;
++		pdata->children = WL1273_RADIO_CHILD;
++	} else if (!pdata) {
+ 		dev_err(&client->dev, "No platform data.\n");
+ 		return -EINVAL;
+ 	}
+@@ -184,6 +195,16 @@ static int wl1273_core_probe(struct i2c_client *client)
+ 	core->client = client;
+ 	mutex_init(&core->lock);
+ 
++	if (client->dev.of_node) {
++		/* held in reset until the radio is switched on */
++		core->reset_gpio = devm_gpiod_get(&client->dev, "reset",
++						  GPIOD_OUT_HIGH);
++		if (IS_ERR(core->reset_gpio))
++			return dev_err_probe(&client->dev,
++					     PTR_ERR(core->reset_gpio),
++					     "cannot get the reset gpio\n");
++	}
++
+ 	i2c_set_clientdata(client, core);
+ 
+ 	dev_dbg(&client->dev, "%s: Have V4L2.\n", __func__);
+@@ -221,16 +242,24 @@ static int wl1273_core_probe(struct i2c_client *client)
+ 	return 0;
+ 
+ err:
+-	pdata->free_resources();
++	if (pdata->free_resources)
++		pdata->free_resources();
+ 
+ 	dev_dbg(&client->dev, "%s\n", __func__);
+ 
+ 	return r;
+ }
+ 
++static const struct of_device_id wl1273_core_of_match[] = {
++	{ .compatible = "ti,wl1273-fm" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, wl1273_core_of_match);
++
+ static struct i2c_driver wl1273_core_driver = {
+ 	.driver = {
+ 		.name = WL1273_FM_DRIVER_NAME,
++		.of_match_table = wl1273_core_of_match,
+ 	},
+ 	.probe = wl1273_core_probe,
+ 	.id_table = wl1273_driver_id_table,
+diff --git a/include/linux/mfd/wl1273-core.h b/include/linux/mfd/wl1273-core.h
+index c28cf76d5..2a3e225b8 100644
+--- a/include/linux/mfd/wl1273-core.h
++++ b/include/linux/mfd/wl1273-core.h
+@@ -11,6 +11,7 @@
+ #ifndef WL1273_CORE_H
+ #define WL1273_CORE_H
+ 
++#include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/mfd/core.h>
+ 
+@@ -266,6 +267,8 @@ struct wl1273_core {
+ 	struct mutex lock; /* for serializing fm radio operations */
+ 
+ 	struct i2c_client *client;
++	/* the chip's reset line, from the device tree (no platform data) */
++	struct gpio_desc *reset_gpio;
+ 
+ 	int (*read)(struct wl1273_core *core, u8, u16 *);
+ 	int (*write)(struct wl1273_core *core, u8, u16);
+@@ -274,4 +277,23 @@ struct wl1273_core {
+ 	int (*set_volume)(struct wl1273_core *core, unsigned int);
+ };
+ 
++/*
++ * The FM part out of reset (on) or back into it: through the board's
++ * callbacks, or the reset line of the device tree.
++ */
++static inline bool wl1273_fm_has_power_control(struct wl1273_core *core)
++{
++	return core->reset_gpio || core->pdata->enable;
++}
++
++static inline void wl1273_fm_power(struct wl1273_core *core, bool on)
++{
++	if (core->reset_gpio)
++		gpiod_set_value_cansleep(core->reset_gpio, !on);
++	else if (on && core->pdata->enable)
++		core->pdata->enable();
++	else if (!on && core->pdata->disable)
++		core->pdata->disable();
++}
++
+ #endif	/* ifndef WL1273_CORE_H */
+-- 
+2.56.0
+

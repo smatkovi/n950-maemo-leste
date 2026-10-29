@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Thu, 29 Oct 2026 21:33:56 +0100
+Subject: [PATCH 19/19] ARM: dts: omap3-n950: WL1273 FM radio
+
+The FM part of the N950's WL1273, as Nokia's board-rm680-peripherals.c
+wires it: I2C3 address 0x22, interrupt on GPIO 43 (falling edge, as
+the driver asks for), reset on GPIO 179. The board file takes GPIO 26
+(shared with Bluetooth) only on boards up to revision 0x0324; the N950
+at hand reports "RM-680 board, rev 1124" in the boot log of ubiboot's
+Harmattan-based kernel, so it has the separate line. The board drives
+the line low at start and high to switch the FM part on: active low
+as a reset.
+
+The analog output reaches the TWL5031's AUXL and AUXR (Nokia's audio
+configuration 4 for the RM-680), already the "FM Radio" input of the
+N950's sound card. The board file muxes none of these pins.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index d2c7bf8ea..6e3f39f5e 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -553,3 +553,21 @@ gnss@800001fa {
+ 		host-req-gpios = <&gpio3 31 GPIO_ACTIVE_HIGH>;	/* 95 */
+ 	};
+ };
++
++/*
++ * FM radio: the FM part of the WL1273 at 0x22 on I2C3, its interrupt on
++ * GPIO 43, its reset on GPIO 179, low while off (board-rm680-peripherals.c).
++ * Boards up to revision 0x0324 shared GPIO 26 with Bluetooth instead; the
++ * N950s sold to developers report revision 1124 at boot. The analog output
++ * goes to the TWL5031's AUXL and AUXR inputs, the sound card's "FM Radio"
++ * (Nokia's audio configuration 4 for the RM-680). Nokia's board file sets
++ * no mux for these pins: they stay as the boot loader set them.
++ */
++&i2c3 {
++	fm-radio@22 {
++		compatible = "ti,wl1273-fm";
++		reg = <0x22>;
++		interrupts-extended = <&gpio2 11 IRQ_TYPE_EDGE_FALLING>;	/* 43 */
++		reset-gpios = <&gpio6 19 GPIO_ACTIVE_LOW>;			/* 179 */
++	};
++};
+-- 
+2.56.0
+
