@@ -47,7 +47,8 @@ aux_capture() {
 	cset 'Analog Right AUXR Capture Switch' on
 }
 
-# the first ALSA capture source of PulseAudio (the TWL5031's)
+# the first ALSA capture source of PulseAudio: the TWL5031's, as the
+# N950's only sound card has no other capture
 pa_source() {
 	pactl list short sources 2>/dev/null |
 		awk '$2 ~ /^alsa_input\./ { print $2; exit }'

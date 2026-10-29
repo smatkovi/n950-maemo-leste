@@ -188,7 +188,10 @@ def main():
             report(fd, rds)
     finally:
         if not o.k:
-            power_off(fd)
+            try:
+                power_off(fd)
+            except OSError as e:
+                print('could not switch the receiver off: %s' % e, file=sys.stderr)
 
 if __name__ == '__main__':
     try:
