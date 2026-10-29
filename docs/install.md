@@ -87,9 +87,34 @@ command line from the boot loader).
    Leste copies the N950's Wi-Fi NVS and Bluetooth firmware from Harmattan's
    partition (`n950-firmware`); nothing of Nokia's is in the image.
 
+   If the image has `/boot/kolibri.bin` (the release images from
+   leste-20261029 on), the "Maemo" entry has two lines, "Leste, Linux
+   6.18" and "KolibriOS (test)", and ubiboot asks which one
+   (`G_OS5_AUTOBOOT=0`); set it back to 1 in `ubiboot.conf` to go
+   straight into Leste. KolibriOS: smatkovi/kolibrios-arm, `docs/n950.md`.
+
+## First checks on the phone
+
+- FM radio, with headphones plugged in (their cable is the antenna):
+  `dmesg | grep -i wl1273` and `ls /dev/radio0` (the driver only loads
+  and registers, the chip stays in reset), then `n950-fm-test scan` or
+  `n950-fm-test <MHz>`: it switches the receiver on, prints the chip's
+  RSSI, stereo and RDS once a second and switches it off again. I2C
+  errors in `dmesg` there mean the chip did not leave reset: compare
+  GPIO 179 and 43 in `/sys/kernel/debug/gpio` with
+  `kernel/patches/0019`.
+- FM sound, as the session's user: `n950-fm-test -k <MHz>`, then
+  `n950-fm-audio on` (the AUX inputs as the TWL5031's capture, played by
+  a PulseAudio loopback), `n950-fm-audio off`, `n950-fm-test off`. If
+  nothing is heard, `FM_AUDIO=bypass` in `/etc/default/n950-fm` routes it
+  inside the codecs without PulseAudio (mono), and `amixer -c N950`
+  shows what is set. Then the "FM Radio" application.
+
 ## Not known yet
 
 Nothing here has run on the phone. In particular: whether ubiboot's
 kexec loads a 6.18 zImage with an appended device tree, how the X server's ManualUpdate behaves
-on this panel, and the charger: without a bq24153 driver the charger runs
+on this panel, the FM radio (the reset line is GPIO 179 for boards after
+revision 0x0324, as the N950 at hand reports 1124; earlier ones share
+GPIO 26 with Bluetooth), and the charger: without a bq24153 driver the charger runs
 in its default mode, so check the battery when Leste runs for long.
