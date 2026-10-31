@@ -99,9 +99,9 @@ USB cable in:
 and read the log on the PC as soon as the gadget appears, since its console
 keeps only 8 KiB until the PC reads (ModemManager must not grab the port):
 
-    until [ -e /dev/serial/by-id/*Gadget_Serial* ]; do sleep 0.2; done
-    stty -F /dev/serial/by-id/*Gadget_Serial* raw -echo
-    cat /dev/serial/by-id/*Gadget_Serial* | tee n950-diag.log
+    until [ -e /dev/serial/by-id/*diag*Gadget_Serial* ]; do sleep 0.2; done
+    stty -F /dev/serial/by-id/*diag*Gadget_Serial* raw -echo
+    cat /dev/serial/by-id/*diag*Gadget_Serial* | tee n950-diag.log
 
 Its modules are not built, those on p4 do not match it, and the serial
 gadget holds the USB controller, so the image's USB network does not come
