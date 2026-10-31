@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Sat, 31 Oct 2026 22:29:13 +0100
+Subject: [PATCH] drm/panel: dsi-cm: native backlight starts at full brightness
+
+Without a backlight in the device tree (the Nokia N950), the panel's own
+DCS brightness is registered as the backlight with brightness 0. Power on
+sets the DCS brightness to 0xff, but the backlight_enable() that follows
+writes the backlight device's brightness, 0, so the screen stays dark
+until user space sets a brightness. Start it at the maximum, as the old
+omapdss panel-taal driver did.
+
+Untested on hardware.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-dsi-cm.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-dsi-cm.c b/drivers/gpu/drm/panel/panel-dsi-cm.c
+index d6a6b346c..990c990bb 100644
+--- a/drivers/gpu/drm/panel/panel-dsi-cm.c
++++ b/drivers/gpu/drm/panel/panel-dsi-cm.c
+@@ -892,6 +892,7 @@ static int dsicm_probe(struct mipi_dsi_device *dsi)
+ 	if (ddata->use_dsi_backlight) {
+ 		struct backlight_properties props = { 0 };
+ 		props.max_brightness = 255;
++		props.brightness = 255;
+ 		props.type = BACKLIGHT_RAW;
+ 
+ 		bldev = devm_backlight_device_register(dev, dev_name(dev),
+-- 
+2.56.0
+

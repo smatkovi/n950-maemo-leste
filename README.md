@@ -69,6 +69,45 @@ partition at all.
 Firmware and calibration data from Harmattan (WLAN NVS, Bluetooth
 `ti1273.bin`, touchscreen configuration) are never part of this repository.
 
+## Diagnostic kernel
+
+    DIAG=1 WORK=$HOME/n950-kernel bash kernel/build.sh
+
+builds a variant of the same kernel (version `-diag`) whose boot can be
+watched before any root file system is mounted: `kernel/config/diag.config`
+on top of `n950.config`, output in `$WORK/out-diag`, the release build left
+alone. Built in: omapdrm with DSI, the panel (`panel-dsi-cm`) and fbcon
+(landscape, `fbcon=rotate:3`); musb with the TWL4030 PHY and the serial
+gadget with its console (`console=ttyGS0`, the PC's `/dev/ttyACM*`); a
+1 MiB log; `ignore_loglevel panic=0` and the consoles appended to whatever
+the boot loader passes (`CONFIG_CMDLINE_EXTEND`). Two patches go only into
+this variant (`kernel/patches/diag/`):
+
+- the N950's TWL5031 watchdog cannot be stopped (Harmattan logs "HACK:
+  TWL5031 WDT can't be disabled" on every boot of the phone at hand), and
+  mainline only writes 0 to it, so the phone resets at most 30 s after the
+  boot loader's last kick; the patch has the watchdog core keep it fed;
+- the panel's own backlight starts at brightness 0, which leaves the screen
+  dark until user space sets one; the patch starts it at full brightness.
+
+Boot it from RAM (nothing is written to the phone), the phone off and the
+USB cable in:
+
+    sudo flasher -k $HOME/n950-kernel/out-diag/arch/arm/boot/zImage-dtb -l \
+        -b"root=PARTUUID=00048046-04 rootwait rw rootfstype=ext4 init=/sbin/init console=ttyGS0,115200 console=tty0"
+
+and read the log on the PC as soon as the gadget appears, since its console
+keeps only 8 KiB until the PC reads (ModemManager must not grab the port):
+
+    until [ -e /dev/serial/by-id/*Gadget_Serial* ]; do sleep 0.2; done
+    stty -F /dev/serial/by-id/*Gadget_Serial* raw -echo
+    cat /dev/serial/by-id/*Gadget_Serial* | tee n950-diag.log
+
+Its modules are not built, those on p4 do not match it, and the serial
+gadget holds the USB controller, so the image's USB network does not come
+up. After a panic or a hard hang nothing feeds the watchdog, so the screen
+stays for 15 to 30 s before the phone resets: film it.
+
 ## License
 
 The kernel patches are GPL-2.0 like the kernel; the scripts are MIT.
