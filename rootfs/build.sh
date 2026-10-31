@@ -141,6 +141,9 @@ log "N900 packages out, hildon-meta-n950 in (chroot, qemu-arm)"
 binfmt_use_static
 sudo -n mount -t proc proc "$DST/proc"
 sudo -n mount --bind /dev "$DST/dev"
+# a slave of the PC's /dev: as its peer, unmounting dev/pts here unmounted
+# the PC's /dev/pts too (no new terminals; pro1x-maemo-leste 3bbfab1)
+sudo -n mount --make-rslave "$DST/dev"
 sudo -n mount --bind /dev/pts "$DST/dev/pts"
 sudo -n mv "$DST/etc/resolv.conf" "$DST/etc/resolv.conf.n950-build"
 sudo -n cp -L /etc/resolv.conf "$DST/etc/resolv.conf"

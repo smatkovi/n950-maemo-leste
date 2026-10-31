@@ -61,6 +61,9 @@ sudo -n mount -t overlay overlay \
 	-o lowerdir="$LOWER",upperdir="$UPPER/upper",workdir="$UPPER/work" "$ROOT"
 sudo -n mount -t proc proc "$ROOT/proc"
 sudo -n mount --bind /dev "$ROOT/dev"
+# a slave of the PC's /dev: as its peer, unmounting dev/pts here unmounted
+# the PC's /dev/pts too (no new terminals; pro1x-maemo-leste 3bbfab1)
+sudo -n mount --make-rslave "$ROOT/dev"
 sudo -n mount --bind /dev/pts "$ROOT/dev/pts"
 sudo -n mkdir -p "$ROOT/mnt/src"
 sudo -n mount --bind "$SRC_DIR" "$ROOT/mnt/src"
