@@ -1,0 +1,34 @@
+From 0822ef63ba8e424412ab609c3193de0421d68d87 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 2 Nov 2026 23:28:20 +0100
+Subject: [PATCH] ARM: dts: omap3-n950-n9: the TWL5031 charger (BCI) is not
+ used
+
+The battery is charged by a bq2415x. With twl4030_charger bound to the TWL5031's BCI, the N950 reset about 30 s after Leste's user space started; with its init blacklisted the system ran on (2026-11-02, kexec from MOSLO).
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950-n9.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950-n9.dtsi b/arch/arm/boot/dts/ti/omap/omap3-n950-n9.dtsi
+index aa4fcdbed..9f656aab0 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950-n9.dtsi
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950-n9.dtsi
+@@ -161,6 +161,15 @@ twl_power: power {
+ 	};
+ };
+ 
++/*
++ * The battery is charged by a bq2415x, not by the TWL5031's charger (BCI).
++ * With twl4030_charger bound to the BCI, the N950 reset about 30 s after
++ * Leste's user space started (2026-11-02).
++ */
++&charger {
++	status = "disabled";
++};
++
+ &twl_gpio {
+ 	ti,pullups = <0x000001>; /* BIT(0) */
+ 	ti,pulldowns = <0x008106>; /* BIT(1) | BIT(2) | BIT(8) | BIT(15) */
+-- 
+2.56.0
+
