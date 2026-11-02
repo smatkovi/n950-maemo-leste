@@ -1,0 +1,63 @@
+#!/bin/busybox sh
+# N950 diagnostic initramfs: the boot log, the eMMC's state and a power
+# cycle test of it to the screen, the USB serial console (ttyGS0) and,
+# once the eMMC works, p4's /boot/diag-dmesg.txt; then a shell on ttyGS0
+# (the PC: kernel/diag-initramfs/README.md).
+/bin/busybox --install -s /bin
+export PATH=/bin
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+mount -t debugfs none /sys/kernel/debug
+echo "=== n950 diag initramfs $(cat /proc/uptime)" > /dev/tty0
+i=0; while [ ! -e /dev/ttyGS0 ] && [ $i -lt 30 ]; do sleep 1; i=$((i + 1)); done
+
+HSMMC=/sys/bus/platform/drivers/omap_hsmmc
+EMMC=480b4000.mmc
+state() {
+	echo "--- $(cat /proc/uptime | cut -d' ' -f1) s: $1"
+	ls /dev/mmcblk* 2>&1
+	cat /sys/kernel/debug/mmc1/ios 2>&1
+	for r in /sys/class/regulator/regulator.*; do
+		echo "$(cat $r/name) $(cat $r/state 2>/dev/null) users=$(cat $r/num_users 2>/dev/null)"
+	done | grep -iE 'vemmc|vmmc|vio|pbias|vaux'
+	grep -E 'gpio-157|gpio-15[0-9] ' /sys/kernel/debug/gpio 2>/dev/null
+}
+# the eMMC after a power cycle of VEMMC (GPIO 157) by unbinding the driver
+cycle() {
+	echo "=== power cycle, $1 s off"
+	echo $EMMC > $HSMMC/unbind 2>&1
+	sleep $1
+	state "unbound"
+	echo $EMMC > $HSMMC/bind 2>&1
+	sleep 5
+	state "bound again"
+	dmesg | grep -iE 'mmc|hsmmc' | tail -25
+}
+dump() {
+	echo "=== uptime $(cat /proc/uptime)"
+	cat /proc/cmdline
+	cat /proc/partitions
+	state "at boot"
+	dmesg
+}
+sleep 5
+LOG=/tmp/diag.txt
+dump > $LOG 2>&1
+[ -b /dev/mmcblk1 ] || { cycle 1; cycle 10; } >> $LOG 2>&1
+for d in /dev/mmcblk1p4 /dev/mmcblk0p4; do
+	[ -b $d ] || continue
+	mount -t ext4 $d /mnt && cp $LOG /mnt/boot/diag-dmesg.txt && sync && umount /mnt &&
+	    echo "=== saved to $d:/boot/diag-dmesg.txt" > /dev/tty0
+	break
+done
+tail -40 $LOG > /dev/tty0
+# the log once and a shell on the USB serial console, again whenever the
+# PC closes it; no cttyhack, which would take the screen's console
+while true; do
+	if [ -e /dev/ttyGS0 ]; then
+		cat $LOG > /dev/ttyGS0 2>&1
+		setsid sh -i < /dev/ttyGS0 > /dev/ttyGS0 2>&1
+	fi
+	sleep 2
+done

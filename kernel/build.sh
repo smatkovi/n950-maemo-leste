@@ -16,7 +16,9 @@
 # kernel/patches/diag/*.patch on top of the others, kernel/config/diag.config
 # merged last, in $WORK/out-diag; zImage and device tree only, and
 # arch/arm/boot/zImage-dtb there is the zImage with the device tree
-# appended, for a boot from RAM.
+# appended, for a boot from RAM. INITRAMFS="<sources>" builds an initramfs
+# into it (CONFIG_INITRAMFS_SOURCE; kernel/diag-initramfs/build.sh makes
+# one with a shell).
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${WORK:?set WORK=<work directory>}
@@ -63,6 +65,11 @@ cp "$WORK/config-base" "$O/.config"
 "$K/scripts/kconfig/merge_config.sh" -m -O "$O" "$O/.config" \
     "${FRAGMENTS[@]}" > "$O/merge.log"
 "${MAKE[@]}" olddefconfig > /dev/null
+if [ -n "$DIAG" ] && [ -n "${INITRAMFS:-}" ]; then
+	"$K/scripts/config" --file "$O/.config" --set-str INITRAMFS_SOURCE "$INITRAMFS" \
+	    --set-val INITRAMFS_ROOT_UID "$(id -u)" --set-val INITRAMFS_ROOT_GID "$(id -g)"
+	"${MAKE[@]}" olddefconfig > /dev/null
+fi
 if [ $# -eq 0 ]; then
 	if [ -n "$DIAG" ]; then
 		set -- zImage ti/omap/omap3-n950.dtb
