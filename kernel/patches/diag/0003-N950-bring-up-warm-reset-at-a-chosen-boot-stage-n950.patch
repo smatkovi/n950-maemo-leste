@@ -1,56 +1,67 @@
-From 8fe7c7f6050eb3b4840d35326694551eba8703a2 Mon Sep 17 00:00:00 2001
+From e04a63375e070cb59ccbff452bee9bdb94ac5310 Mon Sep 17 00:00:00 2001
 From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
 Date: Mon, 2 Nov 2026 14:53:24 +0100
-Subject: [PATCH] N950 bring-up: warm reset at a chosen boot stage
- (n950.reset=N)
+Subject: [PATCH] N950 bring-up: reset at a chosen boot stage (n950.reset=N)
 
 The diagnostic kernel stays dark on the N950: no display, no USB
-console, no reset. A warm reset through PRM_RSTCTRL is the only sign of
-life that needs no driver: n950.reset=N on the command line resets after
-setup_arch (1), mm_core_init (2), sched_init (3), init_IRQ (4),
-time_init (5), console_init (6), before rest_init (7), at
-kernel_init_freeable (8), after each initcall level (10-17) and before
-init runs (20). N950_RESET_EARLY=1 (decompressor entry) or 2 (stext,
-MMU off) in KCPPFLAGS reset even earlier.
+console, no reset. A reset is the only sign of life that needs no
+driver, made the way Harmattan reboots (omap_prcm_arch_reset): the boot
+mode word "BM" for NOLO in the scratchpad, then PRM_RSTCTRL RST_GS;
+mainline's RST_DPLL3 did nothing on the N950. n950.reset=N on the
+command line resets after setup_arch (1), mm_core_init (2), sched_init
+(3), init_IRQ (4), time_init (5), console_init (6), before rest_init
+(7), at kernel_init_freeable (8), after each initcall level (10-17) and
+before init runs (20). N950_RESET_EARLY=1 (decompressor entry) or 2
+(stext, MMU off) in KCPPFLAGS reset even earlier.
 ---
- arch/arm/boot/compressed/head.S |  8 +++++++
- arch/arm/kernel/head.S          |  9 +++++++
- init/main.c                     | 42 +++++++++++++++++++++++++++++++++
- 3 files changed, 59 insertions(+)
+ arch/arm/boot/compressed/head.S | 13 +++++++++
+ arch/arm/kernel/head.S          | 14 ++++++++++
+ init/main.c                     | 48 +++++++++++++++++++++++++++++++++
+ 3 files changed, 75 insertions(+)
 
 diff --git a/arch/arm/boot/compressed/head.S b/arch/arm/boot/compressed/head.S
-index 9f406e9c0..bf28f6000 100644
+index 9f406e9c0..5bca6a584 100644
 --- a/arch/arm/boot/compressed/head.S
 +++ b/arch/arm/boot/compressed/head.S
-@@ -225,6 +225,14 @@ start:
+@@ -225,6 +225,19 @@ start:
   AR_CLASS(	mrs	r9, cpsr	)
  #ifdef CONFIG_ARM_VIRT_EXT
  		bl	__hyp_stub_install	@ get into SVC mode, reversibly
 +#endif
 +#if defined(N950_RESET_EARLY) && N950_RESET_EARLY == 1
 +		@ N950 bring-up: a warm reset as soon as NOLO has jumped here
-+		movw	r0, #0x7250
++		movw	r0, #0x2914		@ scratchpad: boot mode "BM" for NOLO
++		movt	r0, #0x4800
++		mov	r1, #0x4d0000
++		orr	r1, r1, #0x42000000
++		str	r1, [r0]
++		movw	r0, #0x7250		@ PRM_RSTCTRL: RST_GS, as Harmattan
 +		movt	r0, #0x4830
-+		mov	r1, #4
++		mov	r1, #2
 +		str	r1, [r0]
 +1:		b	1b
  #endif
  		mov	r7, r1			@ save architecture ID
  		mov	r8, r2			@ save atags pointer
 diff --git a/arch/arm/kernel/head.S b/arch/arm/kernel/head.S
-index f22c50d4b..46899afe6 100644
+index f22c50d4b..3d037810e 100644
 --- a/arch/arm/kernel/head.S
 +++ b/arch/arm/kernel/head.S
-@@ -97,6 +97,15 @@ ENTRY(stext)
+@@ -97,6 +97,20 @@ ENTRY(stext)
   THUMB(	bx	r9		)	@ If this is a Thumb-2 kernel,
   THUMB(	.thumb			)	@ switch to Thumb now.
   THUMB(1:			)
 +#if defined(N950_RESET_EARLY) && N950_RESET_EARLY == 2
 +	@ N950 bring-up (init/main.c's n950.reset): a warm reset as the first
-+	@ thing the kernel does, MMU still off (PRM_RSTCTRL, RST_DPLL3)
-+	movw	r0, #0x7250
++	@ thing the kernel does, MMU still off
++	movw	r0, #0x2914		@ scratchpad: boot mode "BM" for NOLO
++	movt	r0, #0x4800
++	mov	r1, #0x4d0000
++	orr	r1, r1, #0x42000000
++	str	r1, [r0]
++	movw	r0, #0x7250		@ PRM_RSTCTRL: RST_GS, as Harmattan
 +	movt	r0, #0x4830
-+	mov	r1, #4
++	mov	r1, #2
 +	str	r1, [r0]
 +1:	b	1b
 +#endif
@@ -58,10 +69,10 @@ index f22c50d4b..46899afe6 100644
  #ifdef CONFIG_ARM_VIRT_EXT
  	bl	__hyp_stub_install
 diff --git a/init/main.c b/init/main.c
-index e3ef1eb34..01131dd45 100644
+index e3ef1eb34..bc630f353 100644
 --- a/init/main.c
 +++ b/init/main.c
-@@ -860,6 +860,37 @@ static void __init early_numa_node_init(void)
+@@ -860,6 +860,43 @@ static void __init early_numa_node_init(void)
  #endif
  }
  
@@ -71,9 +82,12 @@ index e3ef1eb34..01131dd45 100644
 + * "n950.reset=N" on the command line. The phone shows nothing before its
 + * display and USB drivers run and has no serial port the board brings out:
 + * whether it starts again (NOLO, then Harmattan) or stays dark tells how far
-+ * the boot got. PRM_RSTCTRL (0x48307250, RST_DPLL3) through omap3_map_io's
-+ * static mapping of L4 core (0x48000000 at 0xfa000000), there from the end
-+ * of setup_arch() on. Not __init: the last stages come after free_initmem().
++ * the boot got. As Harmattan reboots (omap_prcm_arch_reset): the boot mode
++ * word "BM" for NOLO in the scratchpad (0x48002914), then PRM_RSTCTRL
++ * (0x48307250) RST_GS; mainline's RST_DPLL3 does nothing on the N950.
++ * Through omap3_map_io's static mapping of L4 core (0x48000000 at
++ * 0xfa000000), there from the end of setup_arch() on. Not __init: the
++ * last stages come after free_initmem().
 + */
 +static int n950_reset_stage = -1;
 +
@@ -87,8 +101,11 @@ index e3ef1eb34..01131dd45 100644
 +{
 +	if (stage != n950_reset_stage)
 +		return;
-+	pr_emerg("n950.reset: stage %d, warm reset\n", stage);
-+	writel_relaxed(BIT(2), (void __iomem *)0xfa307250);
++	pr_emerg("n950.reset: stage %d, reset\n", stage);
++	/* Harmattan's way: the boot mode word for NOLO, then RST_GS */
++	writel_relaxed(('B' << 24) | ('M' << 16),
++	    (void __iomem *)0xfa002914);
++	writel_relaxed(BIT(1), (void __iomem *)0xfa307250);
 +	for (;;)
 +		cpu_relax();
 +}
@@ -99,7 +116,7 @@ index e3ef1eb34..01131dd45 100644
  asmlinkage __visible __init __no_sanitize_address __noreturn __no_stack_protector
  void start_kernel(void)
  {
-@@ -884,6 +915,7 @@ void start_kernel(void)
+@@ -884,6 +921,7 @@ void start_kernel(void)
  	page_address_init();
  	pr_notice("%s", linux_banner);
  	setup_arch(&command_line);
@@ -107,7 +124,7 @@ index e3ef1eb34..01131dd45 100644
  	/* Static keys and static calls are needed by LSMs */
  	jump_label_init();
  	static_call_init();
-@@ -923,6 +955,7 @@ void start_kernel(void)
+@@ -923,6 +961,7 @@ void start_kernel(void)
  	sort_main_extable();
  	trap_init();
  	mm_core_init();
@@ -115,7 +132,7 @@ index e3ef1eb34..01131dd45 100644
  	maple_tree_init();
  	poking_init();
  	ftrace_init();
-@@ -936,6 +969,7 @@ void start_kernel(void)
+@@ -936,6 +975,7 @@ void start_kernel(void)
  	 * time - but meanwhile we still have a functioning scheduler.
  	 */
  	sched_init();
@@ -123,7 +140,7 @@ index e3ef1eb34..01131dd45 100644
  
  	if (WARN(!irqs_disabled(),
  		 "Interrupts were enabled *very* early, fixing it\n"))
-@@ -968,6 +1002,7 @@ void start_kernel(void)
+@@ -968,6 +1008,7 @@ void start_kernel(void)
  	/* init some links before init_ISA_irqs() */
  	early_irq_init();
  	init_IRQ();
@@ -131,7 +148,7 @@ index e3ef1eb34..01131dd45 100644
  	tick_init();
  	rcu_init_nohz();
  	timers_init();
-@@ -976,6 +1011,7 @@ void start_kernel(void)
+@@ -976,6 +1017,7 @@ void start_kernel(void)
  	softirq_init();
  	timekeeping_init();
  	time_init();
@@ -139,7 +156,7 @@ index e3ef1eb34..01131dd45 100644
  
  	/* This must be after timekeeping is initialized */
  	random_init();
-@@ -1000,6 +1036,7 @@ void start_kernel(void)
+@@ -1000,6 +1042,7 @@ void start_kernel(void)
  	 * this. But we do want output early, in case something goes wrong.
  	 */
  	console_init();
@@ -147,7 +164,7 @@ index e3ef1eb34..01131dd45 100644
  	if (panic_later)
  		panic("Too many boot %s vars at `%s'", panic_later,
  		      panic_param);
-@@ -1062,6 +1099,7 @@ void start_kernel(void)
+@@ -1062,6 +1105,7 @@ void start_kernel(void)
  	kcsan_init();
  
  	/* Do the rest non-__init'ed, we're now alive */
@@ -155,7 +172,7 @@ index e3ef1eb34..01131dd45 100644
  	rest_init();
  
  	/*
-@@ -1299,6 +1337,7 @@ static void __init do_initcall_level(int level, char *command_line)
+@@ -1299,6 +1343,7 @@ static void __init do_initcall_level(int level, char *command_line)
  		do_one_initcall(initcall_from_entry(fn));
  }
  
@@ -163,7 +180,7 @@ index e3ef1eb34..01131dd45 100644
  static void __init do_initcalls(void)
  {
  	int level;
-@@ -1313,6 +1352,7 @@ static void __init do_initcalls(void)
+@@ -1313,6 +1358,7 @@ static void __init do_initcalls(void)
  		/* Parser modifies command_line, restore it each time */
  		strcpy(command_line, saved_command_line);
  		do_initcall_level(level, command_line);
@@ -171,7 +188,7 @@ index e3ef1eb34..01131dd45 100644
  	}
  
  	kfree(command_line);
-@@ -1454,6 +1494,7 @@ static int __ref kernel_init(void *unused)
+@@ -1454,6 +1500,7 @@ static int __ref kernel_init(void *unused)
  
  	system_state = SYSTEM_RUNNING;
  	numa_default_policy();
@@ -179,7 +196,7 @@ index e3ef1eb34..01131dd45 100644
  
  	rcu_end_inkernel_boot();
  
-@@ -1517,6 +1558,7 @@ void __init console_on_rootfs(void)
+@@ -1517,6 +1564,7 @@ void __init console_on_rootfs(void)
  
  static noinline void __init kernel_init_freeable(void)
  {
