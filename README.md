@@ -17,6 +17,7 @@ and boot it.
 | `rootfs/build.sh` | Leste's root file system for partition 4: Leste's N900 image (same SoC family) with the N900 packages swapped for `hildon-meta-n950`, this kernel, `rootfs/overlay` (USB network, Wi-Fi/Bluetooth files from Harmattan, X for the command-mode panel) |
 | `install/n950-install.sh` | from a PC, on the eMMC as ubiboot exports it: shrinks MyDocs, adds partition 4 with Leste, makes Harmattan's /home if missing, adds Leste to `ubiboot.conf` |
 | `docs/install.md` | the layout, what ubiboot needs, the steps |
+| `docs/boot-moslo.md` | **what boots today:** MOSLO from RAM, then Leste by kexec (2026-11-02), and what is still open |
 | `gps/` | GPS through Harmattan's `nped` and `positioningd` in a chroot, bridged to gpsd (`harmattan-gps`, `positioningd-gpsd.py`) |
 | `apps/n950-fm/` | FM radio for Hildon (the Pro1X's `pro1x-fm` for the N950's receiver), `n950-fm-audio` for its sound, `n950-fm-test` for a shell; `apps/build-deb.sh` builds it as an armhf .deb in a chroot of a Leste image |
 
