@@ -11,7 +11,8 @@ description="Copy the N950's Wi-Fi, Bluetooth and FM files from Harmattan"
 
 HARMATTAN=/dev/mmcblk1p2
 MNT=/run/n950-harmattan
-NVS=/lib/firmware/ti-connectivity/wl1271-nvs.bin
+# the name wlcore asks for with a wl127x chip (Harmattan calls it wl1271-nvs.bin)
+NVS=/lib/firmware/ti-connectivity/wl127x-nvs.bin
 FM=/lib/firmware/radio-wl1273-fw.bin
 
 depend() {

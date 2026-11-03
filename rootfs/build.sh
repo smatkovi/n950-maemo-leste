@@ -186,8 +186,9 @@ in_target "apt-get -q -y install /tmp/n950-fm.deb && rm -f /tmp/n950-fm.deb"
 in_target "apt-get -q -y --purge autoremove && apt-get clean"
 in_target "echo 'root:$ROOT_PW' | chpasswd"
 in_target "for s in wl1251-cal gps-nokia-n900; do rc-update del \$s sysinit; rc-update del \$s default; done 2>/dev/null; true"
-# The N950's own NVS replaces the package's generic one (n950-firmware)
-in_target "dpkg-divert --quiet --local --rename --add /lib/firmware/ti-connectivity/wl1271-nvs.bin"
+# The N950's own NVS replaces the package's generic one (n950-firmware);
+# wlcore reads wl127x-nvs.bin for the N950's chip
+in_target "dpkg-divert --quiet --local --rename --add /lib/firmware/ti-connectivity/wl127x-nvs.bin"
 
 log "N950 files (rootfs/overlay)"
 sudo -n rsync -rlpt --chown=root:root "$REPO/rootfs/overlay/" "$DST/"
