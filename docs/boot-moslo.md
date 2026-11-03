@@ -58,6 +58,11 @@ mount it.
   as on Harmattan (address mode MY+MV, partial mode on the 854 visible
   rows), so Leste runs in landscape, 854x480, and the touchscreen's
   coordinates match the screen. X's omap driver cannot rotate on OMAP3.
+- **0026 (wl12xx):** wlcore_spi names the WL1271's device `wl127x`, which
+  wl12xx did not bind, so there was no `wlan0`.
+- **0027 (device tree):** the keyboard slide's GPIO is high when open; with
+  it active low Hildon showed its on-screen keyboard while the keyboard was
+  out.
 
 The diagnostic kernel (`DIAG=1`, `kernel/diag-initramfs/README.md`) has
 the display and a USB serial console built in. It showed the eMMC error
@@ -65,17 +70,22 @@ and Leste's whole boot.
 
 ## Open (2026-11-03)
 
-- **No GPU yet; hildon-desktop draws in software and is slow.** The image
-  carries the N900's PowerVR user space (`sgx-ddk-um-ti343x`, SGX530 1.2.1),
-  the N950 has an SGX530 1.2.5: `SGXInit: Incompatible HW core rev (10205)
-  and SW core rev (10201)`. TI's DDK 1.17.4948957 for the AM335x (`ti335x`,
-  also 1.2.5) initializes the loaded `pvrsrvkm_omap3630_sgx530_125` when
-  started by hand after the boot, but with it as the system's libraries
-  the N950 hung during the boot.
-- After the display was blanked, mce reported it on while X still had it
-  off by DPMS (backlight on, picture black); `xset dpms force on` brought
-  it back.
+- **GPU:** the image carries the N900's PowerVR user space (`sgx-ddk-um-ti343x`,
+  SGX530 1.2.1); the N950 has an SGX530 1.2.5 (`SGXInit: Incompatible HW core
+  rev (10205) and SW core rev (10201)`). What works, tested by hand on the
+  N950 (GLES2 "PowerVR SGX 530", hildon-desktop and Xorg's PVR EXA on the
+  GPU): TI's DDK 1.17.4948957 `ti335x` libraries (AM335x, also 1.2.5) as the
+  system's, **but Leste's own `libdbm`** (TI's accepts only the `tilcdc`
+  display driver, Leste's only `omapdrm`; `Failed to create display device
+  (err=19)` otherwise). Not packaged yet.
+- `sphone` restarts in a loop (`route-pulseaudio: Connection refused`,
+  `SPHONE_MODULE_FATAL`); the N950 has no modem driver under Leste anyway.
+- hildon-desktop's rotation (`ui_can_rotate`) should be off as on the N900
+  (`Xsession.post/19disable-rotation` in leste-config-n900), X cannot rotate.
+- Harmattan's Wi-Fi NVS has no MAC address (wlcore picks a random one);
+  Harmattan reads it from the CAL area.
 - `bq2415x_charger` is blacklisted on p4 and not yet tested
   (`/etc/modprobe.d/n950-test-chargers.conf`).
 - n950-usbnet's address loses to the base image's `usb0` setup.
-- Why NOLO cannot start the 6.18 kernel directly.
+- Why NOLO cannot start the 6.18 kernel directly; a kexec from the running
+  Leste with MOSLO's kexec (2.0.3) reset the N950.
