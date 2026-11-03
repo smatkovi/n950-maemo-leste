@@ -18,7 +18,8 @@
 # partition 4 that install/n950-install.sh creates.
 #
 # FM_DEB=<n950-fm .deb> takes apps/n950-fm from a local build instead of
-# its release; KOLIBRI_BIN=<kolibrios-arm's build/n950/kernel.bin> puts
+# its release, SGX_DEB=<sgx-ddk-um-n950 .deb> the GPU's user space from
+# sgx/build-deb.sh; KOLIBRI_BIN=<kolibrios-arm's build/n950/kernel.bin> puts
 # KolibriOS at /boot/kolibri.bin, for ubiboot's second "Maemo" entry.
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -29,6 +30,7 @@ SIZE_SECTORS=${SIZE_SECTORS:-8388608}		# 4 GiB, partition 4
 ROOT_PW=${ROOT_PW:-n950-leste}
 SSH_PUBKEY=${SSH_PUBKEY:-}
 FM_DEB=${FM_DEB:-}
+SGX_DEB=${SGX_DEB:-}
 KOLIBRI_BIN=${KOLIBRI_BIN:-}
 HOSTNAME_N950=${HOSTNAME_N950:-n950}
 KOUT=$WORK/out
@@ -183,6 +185,18 @@ else
 	sudo -n curl -sfL -o "$DST/tmp/n950-fm.deb" "$FM_URL"
 fi
 in_target "apt-get -q -y install /tmp/n950-fm.deb && rm -f /tmp/n950-fm.deb"
+# The GPU's user space for the N950's SGX530 1.2.5 (sgx/build-deb.sh):
+# its release, or a local build
+SGX_URL=$GH/n950-maemo-leste/releases/download/sgx-ddk-um-n950-1.17.4948957-n950.1/sgx-ddk-um-n950_1.17.4948957-n950.1_armhf.deb
+if [ -n "$SGX_DEB" ]; then
+	sudo -n cp "$SGX_DEB" "$DST/tmp/sgx-ddk-um-n950.deb"
+else
+	sudo -n curl -sfL -o "$DST/tmp/sgx-ddk-um-n950.deb" "$SGX_URL"
+fi
+in_target "apt-get -q -y install /tmp/sgx-ddk-um-n950.deb && rm -f /tmp/sgx-ddk-um-n950.deb"
+# Leste has no driver for the N950's modem, and without it sphone only
+# restarts itself over and over: not started with the session
+in_target "dpkg-divert --quiet --local --rename --add /etc/X11/Xsession.post/70sphone"
 in_target "apt-get -q -y --purge autoremove && apt-get clean"
 in_target "echo 'root:$ROOT_PW' | chpasswd"
 in_target "for s in wl1251-cal gps-nokia-n900; do rc-update del \$s sysinit; rc-update del \$s default; done 2>/dev/null; true"

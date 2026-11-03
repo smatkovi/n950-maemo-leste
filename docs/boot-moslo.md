@@ -70,18 +70,21 @@ and Leste's whole boot.
 
 ## Open (2026-11-03)
 
-- **GPU:** the image carries the N900's PowerVR user space (`sgx-ddk-um-ti343x`,
-  SGX530 1.2.1); the N950 has an SGX530 1.2.5 (`SGXInit: Incompatible HW core
-  rev (10205) and SW core rev (10201)`). What works, tested by hand on the
-  N950 (GLES2 "PowerVR SGX 530", hildon-desktop and Xorg's PVR EXA on the
-  GPU): TI's DDK 1.17.4948957 `ti335x` libraries (AM335x, also 1.2.5) as the
-  system's, **but Leste's own `libdbm`** (TI's accepts only the `tilcdc`
-  display driver, Leste's only `omapdrm`; `Failed to create display device
-  (err=19)` otherwise). Not packaged yet.
-- `sphone` restarts in a loop (`route-pulseaudio: Connection refused`,
-  `SPHONE_MODULE_FATAL`); the N950 has no modem driver under Leste anyway.
-- hildon-desktop's rotation (`ui_can_rotate`) should be off as on the N900
-  (`Xsession.post/19disable-rotation` in leste-config-n900), X cannot rotate.
+- **GPU:** the N950's SGX530 is revision 1.2.5, the image's
+  `sgx-ddk-um-ti343x` the N900's 1.2.1 (`SGXInit: Incompatible HW core rev
+  (10205) and SW core rev (10201)`). `sgx-ddk-um-n950` (`sgx/build-deb.sh`)
+  puts TI's ti335x build in its place and keeps Leste's `libdbm` (TI's
+  accepts only the `tilcdc` display driver: `Failed to create display device
+  (err=19)`). Tested by hand: GLES2 "PowerVR SGX 530", hildon-desktop and
+  Xorg's PVR EXA on the GPU, the desktop runs smoothly. A boot with it and
+  the `powervr` service is still to be tried (an earlier boot with TI's
+  `libdbm` and the old kernel hung).
+- `sphone` restarted itself in a loop (`route-pulseaudio: Connection
+  refused`, `SPHONE_MODULE_FATAL`) and took the CPU; the N950 has no modem
+  driver under Leste, so the image no longer starts it with the session.
+  hildon-desktop's rotation is off as on the N900 (`19disable-rotation`).
+- After X is restarted from a shell, its seat is not active and evdev gets
+  `Permission denied` on every input device; at boot this does not happen.
 - Harmattan's Wi-Fi NVS has no MAC address (wlcore picks a random one);
   Harmattan reads it from the CAL area.
 - `bq2415x_charger` is blacklisted on p4 and not yet tested

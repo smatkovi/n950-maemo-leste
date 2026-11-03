@@ -1,0 +1,5 @@
+# N950 (sourced by Xsession-post), as leste-config-n900 does for the N900:
+# X cannot rotate the screen here (the panel turns the picture into
+# landscape itself, the OMAP3's display controller has no rotation), so
+# hildon-desktop must not try to go portrait when the accelerometer says so.
+gconftool-2 --set --type bool /apps/osso/hildon-desktop/ui_can_rotate false
