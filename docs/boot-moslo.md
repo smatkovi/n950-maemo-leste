@@ -47,20 +47,34 @@ mount it.
   charges through a bq2415x. With `twl4030_charger` bound, the N950 reset
   about 30 s after user space started. A modprobe blacklist was not enough,
   because the module gets loaded explicitly.
+- **0023 (omapdrm):** on OMAP3 the planes are committed before the CRTC is
+  enabled. For the N950's command-mode panel the first frame after
+  switching the display on then either never went out (with a 10 s
+  "flip_done timed out" on every following commit) or, sent with the
+  overlay set up before the channel's stall mode, never finished
+  ("Framedone not received") and froze the display for good. The planes
+  of such a display are now committed again once it is on.
+- **0024, 0025 (panel, device tree):** the panel turns the picture itself,
+  as on Harmattan (address mode MY+MV, partial mode on the 854 visible
+  rows), so Leste runs in landscape, 854x480, and the touchscreen's
+  coordinates match the screen. X's omap driver cannot rotate on OMAP3.
 
 The diagnostic kernel (`DIAG=1`, `kernel/diag-initramfs/README.md`) has
 the display and a USB serial console built in. It showed the eMMC error
 and Leste's whole boot.
 
-## Open (2026-11-02)
+## Open (2026-11-03)
 
-- **The display stays black after the boot.** Xorg, hildon-desktop and mce
-  run, but the PowerVR GPU does not: `SGXInit: Incompatible HW core rev
-  (10205) and SW core rev (10201)`. The N950's SGX530 is revision 1.2.5,
-  and the image carries the N900's user space (`sgx-ddk-um-ti343x`,
-  1.2.1). Leste has no OMAP3630 build. TI's DDK 1.17.4948957 for the AM335x
-  (`ti335x`, also an SGX530 1.2.5) should fit the kernel module that is
-  already loaded (`pvrsrvkm_omap3630_sgx530_125`).
+- **No GPU yet; hildon-desktop draws in software and is slow.** The image
+  carries the N900's PowerVR user space (`sgx-ddk-um-ti343x`, SGX530 1.2.1),
+  the N950 has an SGX530 1.2.5: `SGXInit: Incompatible HW core rev (10205)
+  and SW core rev (10201)`. TI's DDK 1.17.4948957 for the AM335x (`ti335x`,
+  also 1.2.5) initializes the loaded `pvrsrvkm_omap3630_sgx530_125` when
+  started by hand after the boot, but with it as the system's libraries
+  the N950 hung during the boot.
+- After the display was blanked, mce reported it on while X still had it
+  off by DPMS (backlight on, picture black); `xset dpms force on` brought
+  it back.
 - `bq2415x_charger` is blacklisted on p4 and not yet tested
   (`/etc/modprobe.d/n950-test-chargers.conf`).
 - n950-usbnet's address loses to the base image's `usb0` setup.

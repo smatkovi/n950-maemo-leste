@@ -1,0 +1,104 @@
+From fef990e1492180c89323e9197f30a7921e777bde Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 3 Nov 2026 00:37:37 +0100
+Subject: [PATCH 23/25] drm/omap: commit the planes of a manually updated
+ display after enabling it on OMAP3
+
+On OMAP3 omap_atomic_commit_tail() commits the planes before it enables
+the CRTCs. For a manually updated display (DSI command mode, as on the
+N950) that a commit turns on, this goes wrong twice:
+
+- atomic_flush finds the CRTC still off, so it neither sends the panel a
+  frame nor takes the commit's event. drm_atomic_helper_commit_hw_done()
+  warns about the unconsumed event, the commit's flip_done never
+  completes, and every following commit waits 10 s for it ("flip_done
+  timed out"), e.g. each time the display is switched on.
+- The overlay is set up before the LCD channel gets its timings and stall
+  mode, so it misses the FIFO thresholds that OMAP3 needs for manual
+  updates. A frame sent with it never finishes ("Framedone not received"),
+  and as the DSI driver cannot cancel the transfer, the display stays
+  stuck from then on.
+
+Once the CRTCs are on, commit the planes of such a display again: the
+overlay is set up for the programmed channel, and atomic_flush sends the
+frame and arms the event.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/omapdrm/omap_crtc.c |  6 ++++++
+ drivers/gpu/drm/omapdrm/omap_crtc.h |  1 +
+ drivers/gpu/drm/omapdrm/omap_drv.c  | 23 +++++++++++++++++++++++
+ 3 files changed, 30 insertions(+)
+
+diff --git a/drivers/gpu/drm/omapdrm/omap_crtc.c b/drivers/gpu/drm/omapdrm/omap_crtc.c
+index 63ddc5127..8597e9d65 100644
+--- a/drivers/gpu/drm/omapdrm/omap_crtc.c
++++ b/drivers/gpu/drm/omapdrm/omap_crtc.c
+@@ -444,6 +444,12 @@ static void omap_crtc_arm_event(struct drm_crtc *crtc)
+ 	}
+ }
+ 
++/* Whether the CRTC drives a manually updated display (DSI command mode). */
++bool omap_crtc_manually_updated(struct drm_crtc *crtc)
++{
++	return to_omap_crtc_state(crtc->state)->manually_updated;
++}
++
+ static void omap_crtc_atomic_enable(struct drm_crtc *crtc,
+ 				    struct drm_atomic_state *state)
+ {
+diff --git a/drivers/gpu/drm/omapdrm/omap_crtc.h b/drivers/gpu/drm/omapdrm/omap_crtc.h
+index a8b9cbee8..607453332 100644
+--- a/drivers/gpu/drm/omapdrm/omap_crtc.h
++++ b/drivers/gpu/drm/omapdrm/omap_crtc.h
+@@ -30,5 +30,6 @@ void omap_crtc_error_irq(struct drm_crtc *crtc, u32 irqstatus);
+ void omap_crtc_vblank_irq(struct drm_crtc *crtc);
+ void omap_crtc_framedone_irq(struct drm_crtc *crtc, uint32_t irqstatus);
+ void omap_crtc_flush(struct drm_crtc *crtc);
++bool omap_crtc_manually_updated(struct drm_crtc *crtc);
+ 
+ #endif /* __OMAPDRM_CRTC_H__ */
+diff --git a/drivers/gpu/drm/omapdrm/omap_drv.c b/drivers/gpu/drm/omapdrm/omap_drv.c
+index 794267f0f..c54c70b9f 100644
+--- a/drivers/gpu/drm/omapdrm/omap_drv.c
++++ b/drivers/gpu/drm/omapdrm/omap_drv.c
+@@ -64,6 +64,27 @@ static void omap_atomic_wait_for_completion(struct drm_device *dev,
+ 	}
+ }
+ 
++/*
++ * On OMAP3 the planes are committed before the CRTCs are enabled. A manually
++ * updated display (DSI command mode) that this commit turns on needs its
++ * planes committed again once it is on: the overlay setup depends on the LCD
++ * channel's timings and stall mode, which enabling it sets, and only an
++ * enabled CRTC sends the panel a frame and takes the commit's event.
++ */
++static void omap_atomic_commit_enabled_manual(struct drm_atomic_state *old_state)
++{
++	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
++	struct drm_crtc *crtc;
++	unsigned int i;
++
++	for_each_oldnew_crtc_in_state(old_state, crtc, old_crtc_state,
++				      new_crtc_state, i)
++		if (new_crtc_state->active &&
++		    drm_atomic_crtc_needs_modeset(new_crtc_state) &&
++		    omap_crtc_manually_updated(crtc))
++			drm_atomic_helper_commit_planes_on_crtc(old_crtc_state);
++}
++
+ static void omap_atomic_commit_tail(struct drm_atomic_state *old_state)
+ {
+ 	struct drm_device *dev = old_state->dev;
+@@ -102,6 +123,8 @@ static void omap_atomic_commit_tail(struct drm_atomic_state *old_state)
+ 
+ 		drm_atomic_helper_commit_modeset_enables(dev, old_state);
+ 
++		omap_atomic_commit_enabled_manual(old_state);
++
+ 		drm_atomic_helper_commit_hw_done(old_state);
+ 	}
+ 
+-- 
+2.56.0
+

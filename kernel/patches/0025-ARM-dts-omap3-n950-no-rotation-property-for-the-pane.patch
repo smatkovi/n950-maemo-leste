@@ -1,0 +1,34 @@
+From d2af11eded6f2d09e9825a0f9822b1e5d9858802 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 3 Nov 2026 00:37:37 +0100
+Subject: [PATCH 25/25] ARM: dts: omap3-n950: no rotation property for the
+ panel
+
+The panel turns the picture itself now and shows an 854x480 landscape
+mode, which is the N950's natural orientation with the keyboard.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index 6e3f39f5e..04bee2bd4 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -455,9 +455,10 @@ lcd0: panel@0 {
+ 		/*
+ 		 * Mounted for portrait use, the phone is used in landscape
+ 		 * with the keyboard. Of its 864 lines the top and bottom 5
+-		 * are hidden (panel-dsi-cm shows the 854 visible ones).
++		 * are hidden. panel-dsi-cm has the panel turn the picture
++		 * and shows the visible 854x480 in landscape, so no rotation
++		 * property here.
+ 		 */
+-		rotation = <270>;
+ 		panel-timing {
+ 			clock-frequency = <0>;          /* Calculated by dsi */
+ 
+-- 
+2.56.0
+
