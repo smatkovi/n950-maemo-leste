@@ -138,6 +138,10 @@ the device attached); the device-side commands are the ones used by hand on
 
 ## Status
 
-- 2026-11-08: tracer built (`2.6.32.48-dfl61-n950tr`, zImage 2788224 bytes,
-  md5 `bd88c86d…`, checksum 0x5bb9b242), generated code checked with
-  objdump, not yet run on the phone.
+- 2026-11-08: tracer built, **run on the phone, and the black screen diagnosed.**
+  The kexec'd Harmattan kernel reaches stage 24 (end of `do_basic_setup`) with no
+  panic and the image checksum intact — it is not a kexec death but a hang at the
+  **eMMC root mount** (`prepare_namespace` waiting for `/dev/mmcblk0p2`), the same
+  eMMC-after-kexec timeout Leste fixes with patch 0020. Patch `0003` adds that retry
+  to 2.6.32; `~/n950/zImage_2.6.32.48-n950tr-mmc` (md5 `70b6cd1b`) carries the fix and
+  the tracer. See **HANDOVER-boot-from-ubiboot.md** for booting both OSes.

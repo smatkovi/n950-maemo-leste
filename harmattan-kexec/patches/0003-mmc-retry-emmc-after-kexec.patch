@@ -1,0 +1,72 @@
+From 80f948a3d6ab155811e88f48698f1b69b60fcedf Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Sun, 8 Nov 2026 22:55:40 +0100
+Subject: [PATCH] mmc: core: retry the non-removable eMMC after a kexec (N950
+ black screen)
+
+The boot tracer showed the kexec'd Harmattan 2.6.32 kernel reaches the end
+of do_basic_setup and then hangs before exec of init, with no panic: it is
+stuck in prepare_namespace waiting for root (/dev/mmcblk0p2).  The eMMC
+times out on its first access after another kernel left it initialised, and
+a non-removable card is scanned only once.  Retry mmc_rescan's MMC attach a
+few times, 200 ms apart -- the same fix Leste's kernel carries as 0020.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ drivers/mmc/core/core.c | 26 +++++++++++++++++++++++---
+ 1 file changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/mmc/core/core.c b/drivers/mmc/core/core.c
+index b66ef3b7..b9198203 100644
+--- a/drivers/mmc/core/core.c
++++ b/drivers/mmc/core/core.c
+@@ -1400,6 +1400,7 @@ void mmc_rescan(struct work_struct *work)
+ 	u32 ocr;
+ 	int err;
+ 	unsigned long flags;
++	int mmc_rescan_retries = 0;	/* n950: retry the eMMC after a kexec */
+ 
+ 	spin_lock_irqsave(&host->lock, flags);
+ 
+@@ -1441,6 +1442,7 @@ void mmc_rescan(struct work_struct *work)
+ 
+ 	mmc_claim_host(host);
+ 
++mmc_rescan_retry:
+ 	mmc_power_up(host);
+ 	if (!(host->caps & MMC_CAP_MMC_ONLY))
+ 		sdio_reset(host);
+@@ -1479,9 +1481,27 @@ void mmc_rescan(struct work_struct *work)
+ mmc_only:
+ 	err = mmc_send_op_cond(host, 0, &ocr);
+ 	if (!err) {
+-		if (mmc_attach_mmc(host, ocr))
+-			mmc_power_off(host);
+-		goto out;
++		if (!mmc_attach_mmc(host, ocr))
++			goto out;	/* attached */
++		mmc_power_off(host);
++	}
++
++	/*
++	 * n950: the Nokia N950's eMMC at times times out on its first data
++	 * transfer (the EXT_CSD read inside mmc_attach_mmc, or the CMD1
++	 * OP_COND above) after another kernel used it -- e.g. when this
++	 * kernel was started by a kexec, the outgoing kernel left the card
++	 * initialised.  A non-removable card is scanned only once, so the
++	 * boot then waits for its root device for ever (black screen).  Give
++	 * it a few more tries, 200 ms apart; the next attempt finds it.
++	 */
++	if ((host->caps & MMC_CAP_NONREMOVABLE) && mmc_rescan_retries++ < 10) {
++		pr_info("%s: retrying the non-removable card (%d)\n",
++			mmc_hostname(host), mmc_rescan_retries);
++		mmc_release_host(host);
++		mmc_delay(200);
++		mmc_claim_host(host);
++		goto mmc_rescan_retry;
+ 	}
+ 
+ 	mmc_release_host(host);
+-- 
+2.56.0
+
