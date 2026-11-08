@@ -1,0 +1,297 @@
+From 1b7055e98923198550cf9caa98fb48c96ebc5b5d Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 3 Nov 2026 02:13:10 +0100
+Subject: [PATCH] GPU user space package sgx-ddk-um-n950; image: install it, no
+ sphone, no rotation
+
+sgx/build-deb.sh builds sgx-ddk-um-n950 from TI's omap5-sgx-ddk-um-linux
+(1.17.4948957, ti335x, commit 84a396a, files checked against the ones
+tested on the N950): TI's GPU libraries and pvrsrvctl for the SGX530 1.2.5
+in place of sgx-ddk-um-ti343x's (dpkg-divert), Leste's libdbm kept, TI's
+licence as the copyright file. Only tar, xz and ar are needed.
+
+The image installs it, no longer starts sphone with the session (it
+restarted itself in a loop without a modem) and turns hildon-desktop's
+rotation off as leste-config-n900 does on the N900.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ README.md                                     |   7 +-
+ docs/boot-moslo.md                            |  27 ++--
+ rootfs/build.sh                               |  16 +-
+ .../etc/X11/Xsession.post/19disable-rotation  |   5 +
+ sgx/build-deb.sh                              | 142 ++++++++++++++++++
+ 5 files changed, 182 insertions(+), 15 deletions(-)
+ create mode 100644 rootfs/overlay/etc/X11/Xsession.post/19disable-rotation
+ create mode 100644 sgx/build-deb.sh
+
+diff --git a/README.md b/README.md
+index 63742d2..553a7a8 100644
+--- a/README.md
++++ b/README.md
+@@ -19,19 +19,22 @@ and boot it.
+ | `docs/install.md` | the layout, what ubiboot needs, the steps |
+ | `docs/boot-moslo.md` | **what boots today:** MOSLO from RAM, then Leste by kexec (2026-11-02), and what is still open |
+ | `gps/` | GPS through Harmattan's `nped` and `positioningd` in a chroot, bridged to gpsd (`harmattan-gps`, `positioningd-gpsd.py`) |
++| `sgx/build-deb.sh` | the GPU's user space as `sgx-ddk-um-n950`: TI's DDK 1.17.4948957 for the AM335x (the same SGX530 revision 1.2.5) in place of the GPU libraries of Leste's `sgx-ddk-um-ti343x`, Leste's own `libdbm` kept (release `sgx-ddk-um-n950-1.17.4948957-n950.1`) |
+ | `apps/n950-fm/` | FM radio for Hildon (the Pro1X's `pro1x-fm` for the N950's receiver), `n950-fm-audio` for its sound, `n950-fm-test` for a shell; `apps/build-deb.sh` builds it as an armhf .deb in a chroot of a Leste image |
+ 
+ ## Status
+ 
+ | Part | State |
+ | --- | --- |
+-| Display | OMAP DSI FIFO thresholds for the manually updated panel (`0001`), panel orientation from the device tree and the 854 visible lines of the Himalaya panel (`0002`, `0003`) |
++| Display | OMAP DSI FIFO thresholds for the manually updated panel (`0001`), the 854 visible lines of the Himalaya panel (`0003`), the first frame of a command-mode panel on OMAP3 (`0023`), landscape turned by the panel itself as on Harmattan (`0024`, `0025`) |
+ | Touchscreen, LEDs, sensors, fuel gauge | device tree for the maXTouch, LP5523 (channels 0-5 the keyboard light, 8 the white LED, as Harmattan's mce drives them), LIS302DL accelerometer, AK8974 compass, bq27521; OneNAND read-only so the boot loader is never writable from Leste (`0004`) |
+ | Proximity and light | BH1770GLC/SFH7770 device tree support and node (`0005`, `0006`) |
+ | Audio | TLV320DAC33 device tree support, a machine driver for TWL5031 + TLV320DAC33 + TPA6140A2 on one card, device tree nodes (`0007` to `0011`). Headphone plug detection as a switch (`SW_HEADPHONE_INSERT`, TWL5031 GPIO 0 as in Nokia's board file, `0015`); headset microphones and the headset button run through the TWL5031 ACI block, which has no mainline driver. |
+ | GPS (BCM4751) | driver with Nokia's interface, binding lines for wakeup and HOST_REQ, device tree node (`0012` to `0014`); see below |
+-| Keyboard | Nokia's own layouts (`nokia_vndr/rm-680` from Harmattan's xkeyboard-config, whose key codes match the device tree's keymap), compiled at session start in Leste's layout (`rootfs/overlay`); the keyboard light through Leste's mce (`70-n950.ini`) |
++| Keyboard | Nokia's own layouts (`nokia_vndr/rm-680` from Harmattan's xkeyboard-config, whose key codes match the device tree's keymap), compiled at session start in Leste's layout (`rootfs/overlay`); the slide switch active high (`0027`); the keyboard light through Leste's mce (`70-n950.ini`) |
+ | FM radio (WL1273) | `radio-wl1273` back from v6.17 with device tree support, the N950's node: I2C3 0x22, interrupt GPIO 43, reset GPIO 179 (`0016` to `0019`); `/dev/radio0`. The sound: the chip's analog output into the TWL5031's AUXL/AUXR (Nokia's audio configuration 4), recorded by the TWL5031 and played through a PulseAudio loopback (`n950-fm-audio`), as Harmattan's audio policy does; the receiver's firmware patch comes from Harmattan at first boot |
++| GPU (SGX530 1.2.5) | `pvrsrvkm_omap3630_sgx530_125` with TI's ti335x user space (`sgx/`): GLES2 for hildon-desktop through Mesa's pvr driver, PVR2D for X (tested 2026-11-03) |
++| Wi-Fi (WL1271) | over SPI; wl12xx binds the device wlcore_spi creates (`0026`), the calibrated NVS from Harmattan where wlcore reads it (`n950-firmware`); no MAC address in that NVS yet |
+ | Charger (bq24153a) | left out on purpose until it can be tested on the phone |
+ 
+ GPS: the BCM4751's protocol is proprietary and has no free implementation.
+diff --git a/docs/boot-moslo.md b/docs/boot-moslo.md
+index 14b1556..556b4e1 100644
+--- a/docs/boot-moslo.md
++++ b/docs/boot-moslo.md
+@@ -70,18 +70,21 @@ and Leste's whole boot.
+ 
+ ## Open (2026-11-03)
+ 
+-- **GPU:** the image carries the N900's PowerVR user space (`sgx-ddk-um-ti343x`,
+-  SGX530 1.2.1); the N950 has an SGX530 1.2.5 (`SGXInit: Incompatible HW core
+-  rev (10205) and SW core rev (10201)`). What works, tested by hand on the
+-  N950 (GLES2 "PowerVR SGX 530", hildon-desktop and Xorg's PVR EXA on the
+-  GPU): TI's DDK 1.17.4948957 `ti335x` libraries (AM335x, also 1.2.5) as the
+-  system's, **but Leste's own `libdbm`** (TI's accepts only the `tilcdc`
+-  display driver, Leste's only `omapdrm`; `Failed to create display device
+-  (err=19)` otherwise). Not packaged yet.
+-- `sphone` restarts in a loop (`route-pulseaudio: Connection refused`,
+-  `SPHONE_MODULE_FATAL`); the N950 has no modem driver under Leste anyway.
+-- hildon-desktop's rotation (`ui_can_rotate`) should be off as on the N900
+-  (`Xsession.post/19disable-rotation` in leste-config-n900), X cannot rotate.
++- **GPU:** the N950's SGX530 is revision 1.2.5, the image's
++  `sgx-ddk-um-ti343x` the N900's 1.2.1 (`SGXInit: Incompatible HW core rev
++  (10205) and SW core rev (10201)`). `sgx-ddk-um-n950` (`sgx/build-deb.sh`)
++  puts TI's ti335x build in its place and keeps Leste's `libdbm` (TI's
++  accepts only the `tilcdc` display driver: `Failed to create display device
++  (err=19)`). Tested by hand: GLES2 "PowerVR SGX 530", hildon-desktop and
++  Xorg's PVR EXA on the GPU, the desktop runs smoothly. A boot with it and
++  the `powervr` service is still to be tried (an earlier boot with TI's
++  `libdbm` and the old kernel hung).
++- `sphone` restarted itself in a loop (`route-pulseaudio: Connection
++  refused`, `SPHONE_MODULE_FATAL`) and took the CPU; the N950 has no modem
++  driver under Leste, so the image no longer starts it with the session.
++  hildon-desktop's rotation is off as on the N900 (`19disable-rotation`).
++- After X is restarted from a shell, its seat is not active and evdev gets
++  `Permission denied` on every input device; at boot this does not happen.
+ - Harmattan's Wi-Fi NVS has no MAC address (wlcore picks a random one);
+   Harmattan reads it from the CAL area.
+ - `bq2415x_charger` is blacklisted on p4 and not yet tested
+diff --git a/rootfs/build.sh b/rootfs/build.sh
+index e7b62f3..56771f4 100644
+--- a/rootfs/build.sh
++++ b/rootfs/build.sh
+@@ -18,7 +18,8 @@
+ # partition 4 that install/n950-install.sh creates.
+ #
+ # FM_DEB=<n950-fm .deb> takes apps/n950-fm from a local build instead of
+-# its release; KOLIBRI_BIN=<kolibrios-arm's build/n950/kernel.bin> puts
++# its release, SGX_DEB=<sgx-ddk-um-n950 .deb> the GPU's user space from
++# sgx/build-deb.sh; KOLIBRI_BIN=<kolibrios-arm's build/n950/kernel.bin> puts
+ # KolibriOS at /boot/kolibri.bin, for ubiboot's second "Maemo" entry.
+ set -euo pipefail
+ REPO=$(cd "$(dirname "$0")/.." && pwd)
+@@ -29,6 +30,7 @@ SIZE_SECTORS=${SIZE_SECTORS:-8388608}		# 4 GiB, partition 4
+ ROOT_PW=${ROOT_PW:-n950-leste}
+ SSH_PUBKEY=${SSH_PUBKEY:-}
+ FM_DEB=${FM_DEB:-}
++SGX_DEB=${SGX_DEB:-}
+ KOLIBRI_BIN=${KOLIBRI_BIN:-}
+ HOSTNAME_N950=${HOSTNAME_N950:-n950}
+ KOUT=$WORK/out
+@@ -183,6 +185,18 @@ else
+ 	sudo -n curl -sfL -o "$DST/tmp/n950-fm.deb" "$FM_URL"
+ fi
+ in_target "apt-get -q -y install /tmp/n950-fm.deb && rm -f /tmp/n950-fm.deb"
++# The GPU's user space for the N950's SGX530 1.2.5 (sgx/build-deb.sh):
++# its release, or a local build
++SGX_URL=$GH/n950-maemo-leste/releases/download/sgx-ddk-um-n950-1.17.4948957-n950.1/sgx-ddk-um-n950_1.17.4948957-n950.1_armhf.deb
++if [ -n "$SGX_DEB" ]; then
++	sudo -n cp "$SGX_DEB" "$DST/tmp/sgx-ddk-um-n950.deb"
++else
++	sudo -n curl -sfL -o "$DST/tmp/sgx-ddk-um-n950.deb" "$SGX_URL"
++fi
++in_target "apt-get -q -y install /tmp/sgx-ddk-um-n950.deb && rm -f /tmp/sgx-ddk-um-n950.deb"
++# Leste has no driver for the N950's modem, and without it sphone only
++# restarts itself over and over: not started with the session
++in_target "dpkg-divert --quiet --local --rename --add /etc/X11/Xsession.post/70sphone"
+ in_target "apt-get -q -y --purge autoremove && apt-get clean"
+ in_target "echo 'root:$ROOT_PW' | chpasswd"
+ in_target "for s in wl1251-cal gps-nokia-n900; do rc-update del \$s sysinit; rc-update del \$s default; done 2>/dev/null; true"
+diff --git a/rootfs/overlay/etc/X11/Xsession.post/19disable-rotation b/rootfs/overlay/etc/X11/Xsession.post/19disable-rotation
+new file mode 100644
+index 0000000..0fc0053
+--- /dev/null
++++ b/rootfs/overlay/etc/X11/Xsession.post/19disable-rotation
+@@ -0,0 +1,5 @@
++# N950 (sourced by Xsession-post), as leste-config-n900 does for the N900:
++# X cannot rotate the screen here (the panel turns the picture into
++# landscape itself, the OMAP3's display controller has no rotation), so
++# hildon-desktop must not try to go portrait when the accelerometer says so.
++gconftool-2 --set --type bool /apps/osso/hildon-desktop/ui_can_rotate false
+diff --git a/sgx/build-deb.sh b/sgx/build-deb.sh
+new file mode 100644
+index 0000000..a978938
+--- /dev/null
++++ b/sgx/build-deb.sh
+@@ -0,0 +1,142 @@
++#!/bin/bash
++# The N950's PowerVR user space as an armhf .deb, sgx-ddk-um-n950.
++#
++#   OUT=<dir> [TI=<clone of omap5-sgx-ddk-um-linux>] bash sgx/build-deb.sh
++#
++# The N950's SGX530 is revision 1.2.5; Leste's sgx-ddk-um-ti343x carries the
++# N900's user space (1.2.1), which the kernel module refuses. TI's DDK
++# 1.17.4948957 build for the AM335x (ti335x) is for the same SGX530 1.2.5.
++# The package puts its GPU libraries and pvrsrvctl in place of
++# sgx-ddk-um-ti343x's (dpkg-divert, so removing it brings those back).
++# Leste's own libdbm, pvrsrvinit and the library links stay those of
++# sgx-ddk-um-ti343x: TI's libdbm accepts only the AM335x's display driver
++# (tilcdc), Leste's the N950's (omapdrm).
++#
++# Without TI the script fetches TI's repository (only the files it needs)
++# into $OUT/ti-src. The files are checked against the sums of the ones
++# tested on an N950. No packaging tools beyond tar, xz and ar are needed.
++set -euo pipefail
++OUT=${OUT:?set OUT=<directory for the .deb>}
++TI=${TI:-}
++URL=https://git.ti.com/git/graphics/omap5-sgx-ddk-um-linux.git
++BRANCH=1.17.4948957/mesa/glibc-2.35
++COMMIT=84a396a4fb379f10931421e489ac8a199d6a9f2c
++REL=targetfs/ti335x_linux/lws-generic/release
++PKG=sgx-ddk-um-n950
++VERSION=1.17.4948957-n950.1
++LIBDIR=usr/lib/arm-linux-gnueabihf
++log() { echo ">> $*"; }
++
++# file in TI's release tree, sha256 of the version tested on the N950
++FILES=(
++	"usr/bin/pvrsrvctl c2adbdf3aaa13edc9461264f2ce78bb7053ee29f159bd35534ccf6e58e75037d"
++	"usr/lib/libGLESv1_PVR_MESA.so.1.17.4948957 3838c56888967bda42b3d5bb412cec17890bcc251b453ac598698199638bb3f7"
++	"usr/lib/libGLESv2_PVR_MESA.so.1.17.4948957 d5c3d8ffaf66a00b794a053609abfd3d2a28bb9ad82e39835796bf0037e5664b"
++	"usr/lib/libPVRScopeServices.so.1.17.4948957 e76fd84b680133433a91775dc516bb729fa2f7f71550f4ab481c4ca1ce7ebd15"
++	"usr/lib/libglslcompiler.so.1.17.4948957 724f104da6e5a2e9a600aafe703edf02c1035971a13d2e7162cbbaef76a561a4"
++	"usr/lib/libpvr2d.so.1.17.4948957 7a54f6746cbb7ea711efde0e2105c0df9c1cf1ed18f6f374277294d622470891"
++	"usr/lib/libpvr_dri_support.so.1.17.4948957 b7267e4436bc220cc5a291fd60c3cc9133660750172f7a7f6d6aa5d23e07becf"
++	"usr/lib/libsrv_init.so.1.17.4948957 1ffaea6766c81c5d2a73d726ca30d7f9bcd37c9fbd0d32f2b3ec507705146aac"
++	"usr/lib/libsrv_um.so.1.17.4948957 97ad164587f09b2dd75079e75d98a17f51bcbf049cd3727d7a790895f7856072"
++	"usr/lib/libusc.so.1.17.4948957 42fc3803dfdd5f3518fbe631be3c7bc1b1ca2046d1e7892daa09ea04d1ac3a6c"
++)
++
++mkdir -p "$OUT"
++OUT=$(cd "$OUT" && pwd)
++if [ -z "$TI" ]; then
++	TI=$OUT/ti-src
++	if [ ! -d "$TI/.git" ]; then
++		log "fetch TI's $BRANCH (no blobs but the ones needed)"
++		git init -q "$TI"
++		git -C "$TI" remote add origin "$URL"
++		git -C "$TI" fetch -q --filter=blob:none origin "$BRANCH"
++		git -C "$TI" sparse-checkout set --no-cone "/$REL/" /LICENSE
++	fi
++	git -C "$TI" checkout -q "$COMMIT"
++fi
++[ "$(git -C "$TI" rev-parse HEAD)" = "$COMMIT" ] ||
++	{ echo "$TI is not at $COMMIT"; exit 1; }
++
++W=$OUT/$PKG-build
++rm -rf "$W"
++mkdir -p "$W/root/$LIBDIR" "$W/root/usr/bin" "$W/root/usr/share/doc/$PKG" "$W/control"
++
++# The installed paths, for the diversions
++DIVERTED=()
++for entry in "${FILES[@]}"; do
++	f=${entry% *}
++	sum=${entry#* }
++	echo "$sum  $TI/$REL/$f" | sha256sum --quiet -c -
++	case $f in
++	usr/bin/*) dst=usr/bin/${f##*/}; mode=755 ;;
++	*) dst=$LIBDIR/${f##*/}; mode=644 ;;
++	esac
++	install -m "$mode" "$TI/$REL/$f" "$W/root/$dst"
++	DIVERTED+=("/$dst")
++done
++
++{
++	echo "$PKG: TI's PowerVR SGX DDK 1.17.4948957 user space, ti335x build,"
++	echo "from $URL"
++	echo "(branch $BRANCH, commit $COMMIT, $REL), unmodified."
++	echo "It is licensed for use with TI devices only; the N950's OMAP3630 is one."
++	echo
++	cat "$TI/LICENSE"
++} > "$W/root/usr/share/doc/$PKG/copyright"
++chmod 644 "$W/root/usr/share/doc/$PKG/copyright"
++
++cat > "$W/control/control" <<EOF
++Package: $PKG
++Version: $VERSION
++Architecture: armhf
++Maintainer: Sebastian Matkovich <sebastian.matkovich@gmail.com>
++Depends: sgx-ddk-um-ti343x (>= 1.17.4948957)
++Section: libs
++Priority: optional
++Installed-Size: $(du -sk "$W/root" | cut -f1)
++Description: PowerVR SGX530 1.2.5 user space for the Nokia N950
++ TI's DDK 1.17.4948957 for the AM335x (ti335x), the same SGX530 revision as
++ the N950's OMAP3630, in place of the GPU libraries and pvrsrvctl of
++ sgx-ddk-um-ti343x (the N900's revision 1.2.1, which the kernel module
++ refuses). Leste's libdbm and pvrsrvinit stay in use. The GPU starts with
++ its new user space on the next boot.
++EOF
++
++list=${DIVERTED[*]}
++cat > "$W/control/preinst" <<EOF
++#!/bin/sh
++set -e
++if [ "\$1" = install ] || [ "\$1" = upgrade ]; then
++	for f in $list; do
++		dpkg-divert --quiet --package $PKG --add --rename --divert "\$f.ti343x" "\$f"
++	done
++fi
++EOF
++cat > "$W/control/postrm" <<EOF
++#!/bin/sh
++set -e
++if [ "\$1" = remove ] || [ "\$1" = abort-install ] || [ "\$1" = disappear ]; then
++	for f in $list; do
++		dpkg-divert --quiet --package $PKG --remove --rename --divert "\$f.ti343x" "\$f"
++	done
++fi
++EOF
++cat > "$W/control/postinst" <<'EOF'
++#!/bin/sh
++set -e
++[ "$1" = configure ] && ldconfig
++exit 0
++EOF
++chmod 755 "$W/control/preinst" "$W/control/postrm" "$W/control/postinst"
++(cd "$W/root" && find . -type f ! -path './DEBIAN/*' -printf '%P\n' | sort |
++	xargs md5sum) > "$W/control/md5sums"
++
++TAR=(tar --owner=0 --group=0 --numeric-owner --sort=name --mtime=@0)
++"${TAR[@]}" -C "$W/control" -cJf "$W/control.tar.xz" .
++"${TAR[@]}" -C "$W/root" -cJf "$W/data.tar.xz" ./usr
++echo 2.0 > "$W/debian-binary"
++DEB=$OUT/${PKG}_${VERSION}_armhf.deb
++rm -f "$DEB"
++(cd "$W" && ar -rcD "$DEB" debian-binary control.tar.xz data.tar.xz)
++rm -rf "$W"
++log "$DEB"
+-- 
+2.56.0
+

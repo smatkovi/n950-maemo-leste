@@ -20,6 +20,7 @@ and boot it.
 | `docs/boot-moslo.md` | **what boots today:** MOSLO from RAM, then Leste by kexec (2026-11-02), and what is still open |
 | `gps/` | GPS through Harmattan's `nped` and `positioningd` in a chroot, bridged to gpsd (`harmattan-gps`, `positioningd-gpsd.py`) |
 | `sgx/build-deb.sh` | the GPU's user space as `sgx-ddk-um-n950`: TI's DDK 1.17.4948957 for the AM335x (the same SGX530 revision 1.2.5) in place of the GPU libraries of Leste's `sgx-ddk-um-ti343x`, Leste's own `libdbm` kept (release `sgx-ddk-um-n950-1.17.4948957-n950.1`) |
+| `harmattan-kexec/` | why Harmattan 2.6.32 dies after a kexec: a boot tracer for the Harmattan kernel (OneNAND + RAM markers, image self-checksum), build and test scripts |
 | `apps/n950-fm/` | FM radio for Hildon (the Pro1X's `pro1x-fm` for the N950's receiver), `n950-fm-audio` for its sound, `n950-fm-test` for a shell; `apps/build-deb.sh` builds it as an armhf .deb in a chroot of a Leste image |
 
 ## Status

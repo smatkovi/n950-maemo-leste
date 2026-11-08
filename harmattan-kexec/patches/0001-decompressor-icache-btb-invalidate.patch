@@ -1,0 +1,26 @@
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Fri, 7 Nov 2026 23:00:00 +0100
+Subject: [PATCH 1/2] decompressor: invalidate I-cache and branch predictor before cache_on
+
+The "openmode_icachefix" kernel (2026-11-07) is the openmode_l2fix zImage
+binary-patched with exactly this sequence at the decompressor entry; the
+same change in source form.  On its own it did not cure the kexec black
+screen.
+
+---
+--- a/arch/arm/boot/compressed/head.S
++++ b/arch/arm/boot/compressed/head.S
+@@ -465,6 +465,12 @@
+ 
+ __armv7_mmu_cache_on:
+ 		mov	r12, lr
++		@ kexec-fix: invalidate I-cache + branch predictor before (re)enabling caches
++		mov	r0, #0
++		mcr	p15, 0, r0, c7, c5, 0	@ ICIALLU: invalidate I-cache
++		mcr	p15, 0, r0, c7, c5, 6	@ BPIALL: invalidate branch predictor
++		mcr	p15, 0, r0, c7, c10, 4	@ DSB
++		mcr	p15, 0, r0, c7, c5, 4	@ ISB
+ #ifdef CONFIG_MMU
+ 		mrc	p15, 0, r11, c0, c1, 4	@ read ID_MMFR0
+ 		tst	r11, #0xf		@ VMSA
+-- 
