@@ -194,12 +194,17 @@ Xorg, hildon-desktop, mce, dsme running; 7 min uptime and counting. A black scre
 *now* is mce's display blanking (`bl_power=4`), the power button or
 `dbus-send … com.nokia.mce.request.req_display_state_on` turns it on.
 
-**On the watchdog story:** `omap_wdt.early_enable=1` stays in p4 `/boot/cmdline`
-(the file ubiboot uses verbatim for OS3), but whether it is needed is **untested**:
-reading the 6.18 tree, hwmod resets and stops `wd_timer2` at `postcore_initcall`
-(`omap2_wd_timer_reset` → `omap2_wd_timer_disable`) long before `omap_wdt` probes,
-and the earlier "~54 s reset" tests all ran without matching modules too. Try a boot
-without the token when convenient; if it still boots, drop it.
+**On the watchdog story:** two independent problems, two fixes. The blind boot above
+already had `omap_wdt.early_enable=1` on its command line (from p4 `/boot/cmdline`,
+the file ubiboot uses verbatim for OS3) and ran for about 8 minutes with no reset
+(dmesg to 65 s, syslog to ~2 min, the phone was switched off by hand later) — so the
+token does cure the ~54 s reset, and the modules cure the blindness. The earlier test
+that "made no difference" most likely went through `G_OS3_INIT_CMDLINE_APPENDS`,
+which ubiboot ignores whenever the cmdline *file* exists. Keep the token. (One boot
+without it would settle the point for good; the reading that 6.18's hwmod code
+stops `wd_timer2` early on its own is a hypothesis from the source, not an
+observation.) The boot in the logs was started from the ubiboot *menu*, so the
+PC-free menu path is validated too, not only the manual kexec.
 
 Also seen in Leste's dmesg after a kexec from ubiboot: `PVR_K:(Error):
 BridgedDispatchKM: Initialisation failed. Driver unusable.` (SGX) — a GPU topic,

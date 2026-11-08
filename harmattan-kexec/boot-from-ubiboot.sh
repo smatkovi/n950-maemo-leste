@@ -6,9 +6,9 @@
 #   * Leste "did not boot" from ubiboot because p4 carried the modules of the old
 #     g79375 kernel while /boot/zImage was ga6675: display, USB and zram are
 #     modules, so the kernel ran to multi-user blind.  Installing the matching
-#     modules fixed it (2026-11-08).  omap_wdt.early_enable=1 stays in p4's cmdline;
-#     whether it is needed at all is untested (the 6.18 hwmod code resets and stops
-#     wd_timer2 at postcore_initcall anyway).
+#     modules fixed it (2026-11-08).  omap_wdt.early_enable=1 in p4's cmdline is the
+#     other, independent fix: that same blind boot carried it and ran ~8 min with no
+#     reset, where the earlier boots died at ~54 s.
 #   * MeeGo (Harmattan 2.6.32) does NOT die early: the tracer showed it runs to the
 #     end of do_basic_setup and then hangs in prepare_namespace waiting for root,
 #     because the eMMC times out on its first access after the kexec.  The kernel
@@ -62,8 +62,11 @@ check)
 leste)
 	echo "== kexec Leste (a6675, patch 0020/0021/0022) with $LESTE_CMDLINE_EXTRA =="
 	echo "   (no reflash, no kernel rebuild - the fix is only the extra cmdline token)"
+	# p4's /boot/cmdline (the file ubiboot uses verbatim for OS3) already carries the
+	# token since 2026-11-08; append it only if it is missing, so it is not passed twice.
 	T "mkdir -p /mnt/4; mount -o ro /dev/mmcblk0p4 /mnt/4 && \
-	   kexec -l --type=zImage --command-line=\"\$(cat /mnt/4/boot/cmdline) $LESTE_CMDLINE_EXTRA\" /mnt/4/boot/zImage && \
+	   CL=\"\$(cat /mnt/4/boot/cmdline)\"; case \"\$CL\" in *$LESTE_CMDLINE_EXTRA*) ;; *) CL=\"\$CL $LESTE_CMDLINE_EXTRA\";; esac; \
+	   kexec -l --type=zImage --command-line=\"\$CL\" /mnt/4/boot/zImage && \
 	   echo LOAD_OK && umount /mnt/4 2>/dev/null; /usr/bin/disable_pm 2>/dev/null; sync; echo 'firing kexec -e'; kexec -e" | CLEAN
 	echo "== watching USB for up to 200 s: Leste's RNDIS gadget (1d6b:0104, 'Maemo Leste') shows up ~150 s after the kexec =="
 	usb_watch 200
