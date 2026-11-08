@@ -35,7 +35,13 @@ yes "" | make O="$OUT" oldconfig >/dev/null || true   # yes gets SIGPIPE
 grep -E '^CONFIG_(KEXEC|ATAGS_PROC|LOCALVERSION|PAGE_OFFSET|KERNEL_LZO)' "$OUT/.config"
 
 echo "=== build zImage with $JOBS jobs ==="
-make O="$OUT" -j"$JOBS" zImage 2>&1 | tee "$OUT/build.log" | grep -E "error|Error|warning: .*n950|^  (LD|OBJCOPY|LZO).*zImage|^  AS .*head" || true
+rm -f "$OUT/arch/arm/boot/zImage" "$OUT/arch/arm/boot/compressed/vmlinux"
+if ! make O="$OUT" -j"$JOBS" zImage >"$OUT/build.log" 2>&1; then
+	grep -E "error|Error" "$OUT/build.log" | head -20
+	echo "BUILD FAILED, see $OUT/build.log"
+	exit 1
+fi
+grep -E "warning: .*n950|^  (LD|OBJCOPY|LZO).*zImage" "$OUT/build.log" || true
 test -f "$OUT/arch/arm/boot/zImage"
 
 echo "=== patch self-checksum ==="

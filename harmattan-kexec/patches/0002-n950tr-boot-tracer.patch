@@ -1,297 +1,914 @@
-From 1b7055e98923198550cf9caa98fb48c96ebc5b5d Mon Sep 17 00:00:00 2001
+From 29edb50315ada0357fe1e63fc32eea8c42c04036 Mon Sep 17 00:00:00 2001
 From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
-Date: Tue, 3 Nov 2026 02:13:10 +0100
-Subject: [PATCH] GPU user space package sgx-ddk-um-n950; image: install it, no
- sphone, no rotation
+Date: Sun, 8 Nov 2026 22:13:59 +0100
+Subject: [PATCH] n950tr: boot tracer for the kexec black-screen investigation
 
-sgx/build-deb.sh builds sgx-ddk-um-n950 from TI's omap5-sgx-ddk-um-linux
-(1.17.4948957, ti335x, commit 84a396a, files checked against the ones
-tested on the N950): TI's GPU libraries and pvrsrvctl for the SGX530 1.2.5
-in place of sgx-ddk-um-ti343x's (dpkg-divert), Leste's libdbm kept, TI's
-licence as the copyright file. Only tar, xz and ar are needed.
+Record boot progress where a serial console would be: a RAM record at
+0x9F000000 and one OneNAND page per stage in mtd3's second block (survives
+any reset).  Stages run from the first instruction of the zImage, through
+an image self-checksum, the decompressor, head.S, start_kernel and the
+init sequence to the exec of init; panic(), die() and the head.S error
+loops are recorded too.  See arch/arm/include/asm/n950trace.h.
 
-The image installs it, no longer starts sphone with the session (it
-restarted itself in a loop without a modem) and turns hildon-desktop's
-rotation off as leste-config-n900 does on the N900.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
- README.md                                     |   7 +-
- docs/boot-moslo.md                            |  27 ++--
- rootfs/build.sh                               |  16 +-
- .../etc/X11/Xsession.post/19disable-rotation  |   5 +
- sgx/build-deb.sh                              | 142 ++++++++++++++++++
- 5 files changed, 182 insertions(+), 15 deletions(-)
- create mode 100644 rootfs/overlay/etc/X11/Xsession.post/19disable-rotation
- create mode 100644 sgx/build-deb.sh
+ arch/arm/boot/compressed/head.S   | 203 +++++++++++++++++++++++++++++-
+ arch/arm/boot/compressed/misc.c   |   3 +
+ arch/arm/include/asm/n950trace.h  |  75 +++++++++++
+ arch/arm/kernel/Makefile          |   2 +-
+ arch/arm/kernel/head-common.S     |   4 +
+ arch/arm/kernel/head.S            | 107 ++++++++++++++++
+ arch/arm/kernel/n950trace.c       |  74 +++++++++++
+ arch/arm/kernel/setup.c           |   3 +
+ arch/arm/kernel/traps.c           |   2 +
+ arch/arm/mach-omap2/board-rm680.c |   4 +
+ arch/arm/mach-omap2/io.c          |  13 ++
+ arch/arm/mach-omap2/pm34xx.c      |   4 +
+ init/main.c                       |  12 ++
+ kernel/panic.c                    |   3 +
+ 14 files changed, 505 insertions(+), 4 deletions(-)
+ create mode 100644 arch/arm/include/asm/n950trace.h
+ create mode 100644 arch/arm/kernel/n950trace.c
 
-diff --git a/README.md b/README.md
-index 63742d2..553a7a8 100644
---- a/README.md
-+++ b/README.md
-@@ -19,19 +19,22 @@ and boot it.
- | `docs/install.md` | the layout, what ubiboot needs, the steps |
- | `docs/boot-moslo.md` | **what boots today:** MOSLO from RAM, then Leste by kexec (2026-11-02), and what is still open |
- | `gps/` | GPS through Harmattan's `nped` and `positioningd` in a chroot, bridged to gpsd (`harmattan-gps`, `positioningd-gpsd.py`) |
-+| `sgx/build-deb.sh` | the GPU's user space as `sgx-ddk-um-n950`: TI's DDK 1.17.4948957 for the AM335x (the same SGX530 revision 1.2.5) in place of the GPU libraries of Leste's `sgx-ddk-um-ti343x`, Leste's own `libdbm` kept (release `sgx-ddk-um-n950-1.17.4948957-n950.1`) |
- | `apps/n950-fm/` | FM radio for Hildon (the Pro1X's `pro1x-fm` for the N950's receiver), `n950-fm-audio` for its sound, `n950-fm-test` for a shell; `apps/build-deb.sh` builds it as an armhf .deb in a chroot of a Leste image |
+diff --git a/arch/arm/boot/compressed/head.S b/arch/arm/boot/compressed/head.S
+index eef810f9..4809d05d 100644
+--- a/arch/arm/boot/compressed/head.S
++++ b/arch/arm/boot/compressed/head.S
+@@ -10,6 +10,11 @@
+  */
+ #include <linux/linkage.h>
  
- ## Status
++/* n950tr: N950 boot tracer addresses (see n950_tr below) */
++#define N950TR_DDR	0x9F000000
++#define N950TR_ONENAND	0x04000000
++#define N950TR_FBA	80
++
+ /*
+  * Debugging stuff
+  *
+@@ -133,11 +138,53 @@ start:
  
- | Part | State |
- | --- | --- |
--| Display | OMAP DSI FIFO thresholds for the manually updated panel (`0001`), panel orientation from the device tree and the 854 visible lines of the Himalaya panel (`0002`, `0003`) |
-+| Display | OMAP DSI FIFO thresholds for the manually updated panel (`0001`), the 854 visible lines of the Himalaya panel (`0003`), the first frame of a command-mode panel on OMAP3 (`0023`), landscape turned by the panel itself as on Harmattan (`0024`, `0025`) |
- | Touchscreen, LEDs, sensors, fuel gauge | device tree for the maXTouch, LP5523 (channels 0-5 the keyboard light, 8 the white LED, as Harmattan's mce drives them), LIS302DL accelerometer, AK8974 compass, bq27521; OneNAND read-only so the boot loader is never writable from Leste (`0004`) |
- | Proximity and light | BH1770GLC/SFH7770 device tree support and node (`0005`, `0006`) |
- | Audio | TLV320DAC33 device tree support, a machine driver for TWL5031 + TLV320DAC33 + TPA6140A2 on one card, device tree nodes (`0007` to `0011`). Headphone plug detection as a switch (`SW_HEADPHONE_INSERT`, TWL5031 GPIO 0 as in Nokia's board file, `0015`); headset microphones and the headset button run through the TWL5031 ACI block, which has no mainline driver. |
- | GPS (BCM4751) | driver with Nokia's interface, binding lines for wakeup and HOST_REQ, device tree node (`0012` to `0014`); see below |
--| Keyboard | Nokia's own layouts (`nokia_vndr/rm-680` from Harmattan's xkeyboard-config, whose key codes match the device tree's keymap), compiled at session start in Leste's layout (`rootfs/overlay`); the keyboard light through Leste's mce (`70-n950.ini`) |
-+| Keyboard | Nokia's own layouts (`nokia_vndr/rm-680` from Harmattan's xkeyboard-config, whose key codes match the device tree's keymap), compiled at session start in Leste's layout (`rootfs/overlay`); the slide switch active high (`0027`); the keyboard light through Leste's mce (`70-n950.ini`) |
- | FM radio (WL1273) | `radio-wl1273` back from v6.17 with device tree support, the N950's node: I2C3 0x22, interrupt GPIO 43, reset GPIO 179 (`0016` to `0019`); `/dev/radio0`. The sound: the chip's analog output into the TWL5031's AUXL/AUXR (Nokia's audio configuration 4), recorded by the TWL5031 and played through a PulseAudio loopback (`n950-fm-audio`), as Harmattan's audio policy does; the receiver's firmware patch comes from Harmattan at first boot |
-+| GPU (SGX530 1.2.5) | `pvrsrvkm_omap3630_sgx530_125` with TI's ti335x user space (`sgx/`): GLES2 for hildon-desktop through Mesa's pvr driver, PVR2D for X (tested 2026-11-03) |
-+| Wi-Fi (WL1271) | over SPI; wl12xx binds the device wlcore_spi creates (`0026`), the calibrated NVS from Harmattan where wlcore reads it (`n950-firmware`); no MAC address in that NVS yet |
- | Charger (bq24153a) | left out on purpose until it can be tested on the phone |
+ 		b	1f
+ 		.word	0x016f2818		@ Magic numbers to help the loader
+-		.word	start			@ absolute load/run zImage address
+-		.word	_edata			@ zImage end address
++LH_start:	.word	start			@ absolute load/run zImage address
++LH_edata:	.word	_edata			@ zImage end address
++LH_csum:	.word	0			@ n950tr: image checksum, patched post-build
++		.ascii	"N9TR"			@ n950tr: marker (byte offset 0x34)
+ 1:		mov	r7, r1			@ save architecture ID
+ 		mov	r8, r2			@ save atags pointer
  
- GPS: the BCM4751's protocol is proprietary and has no free implementation.
-diff --git a/docs/boot-moslo.md b/docs/boot-moslo.md
-index 14b1556..556b4e1 100644
---- a/docs/boot-moslo.md
-+++ b/docs/boot-moslo.md
-@@ -70,18 +70,21 @@ and Leste's whole boot.
++		/*
++		 * n950tr: boot tracer.  Stage 1 = first instructions of the
++		 * zImage were executed.  Then verify our own image: sum of all
++		 * 32-bit words from start to _edata (the stored checksum word
++		 * counts as 0) must equal LH_csum.  Stage 2 = image intact,
++		 * stage 31 = image corrupted (aux0 = computed, aux1 = expected).
++		 * No stack exists yet; n950_tr clobbers r0-r3, r12, lr only.
++		 */
++		ldr	r3, =N950TR_DDR
++		mov	r12, #0
++		str	r12, [r3, #4]
++		str	r12, [r3, #8]
++		str	r12, [r3, #12]
++		str	r12, [r3, #16]
++		str	r12, [r3, #20]
++		mov	r0, #1
++		mov	r1, #0
++		mov	r2, #0
++		bl	n950_tr
++
++		adr	r3, start		@ runtime address of the image
++		ldr	r12, LH_edata
++		ldr	r1, LH_start
++		sub	r12, r12, r1		@ image length
++		add	r12, r3, r12		@ runtime end address
++		mov	r1, r3
++		mov	r2, #0
++9:		ldr	r0, [r1], #4
++		add	r2, r2, r0
++		cmp	r1, r12
++		blo	9b
++		ldr	r0, LH_csum
++		sub	r2, r2, r0		@ do not count the checksum word itself
++		cmp	r2, r0
++		mov	r1, r2			@ aux0 = computed
++		ldr	r2, LH_csum		@ aux1 = expected
++		moveq	r0, #2
++		movne	r0, #31
++		bl	n950_tr
++
+ #ifndef __ARM_ARCH_2__
+ 		/*
+ 		 * Booting from Angel - need to enter SVC mode and disable
+@@ -241,6 +288,11 @@ not_relocated:	mov	r0, #0
+ 		 */
+ 		bl	cache_on
  
- ## Open (2026-11-03)
++		mov	r0, #3			@ n950tr stage 3: caches/MMU on
++		mov	r1, #0
++		mov	r2, #0
++		bl	n950_tr
++
+ 		mov	r1, sp			@ malloc space above stack
+ 		add	r2, sp, #0x10000	@ 64k max
  
--- **GPU:** the image carries the N900's PowerVR user space (`sgx-ddk-um-ti343x`,
--  SGX530 1.2.1); the N950 has an SGX530 1.2.5 (`SGXInit: Incompatible HW core
--  rev (10205) and SW core rev (10201)`). What works, tested by hand on the
--  N950 (GLES2 "PowerVR SGX 530", hildon-desktop and Xorg's PVR EXA on the
--  GPU): TI's DDK 1.17.4948957 `ti335x` libraries (AM335x, also 1.2.5) as the
--  system's, **but Leste's own `libdbm`** (TI's accepts only the `tilcdc`
--  display driver, Leste's only `omapdrm`; `Failed to create display device
--  (err=19)` otherwise). Not packaged yet.
--- `sphone` restarts in a loop (`route-pulseaudio: Connection refused`,
--  `SPHONE_MODULE_FATAL`); the N950 has no modem driver under Leste anyway.
--- hildon-desktop's rotation (`ui_can_rotate`) should be off as on the N900
--  (`Xsession.post/19disable-rotation` in leste-config-n900), X cannot rotate.
-+- **GPU:** the N950's SGX530 is revision 1.2.5, the image's
-+  `sgx-ddk-um-ti343x` the N900's 1.2.1 (`SGXInit: Incompatible HW core rev
-+  (10205) and SW core rev (10201)`). `sgx-ddk-um-n950` (`sgx/build-deb.sh`)
-+  puts TI's ti335x build in its place and keeps Leste's `libdbm` (TI's
-+  accepts only the `tilcdc` display driver: `Failed to create display device
-+  (err=19)`). Tested by hand: GLES2 "PowerVR SGX 530", hildon-desktop and
-+  Xorg's PVR EXA on the GPU, the desktop runs smoothly. A boot with it and
-+  the `powervr` service is still to be tried (an earlier boot with TI's
-+  `libdbm` and the old kernel hung).
-+- `sphone` restarted itself in a loop (`route-pulseaudio: Connection
-+  refused`, `SPHONE_MODULE_FATAL`) and took the CPU; the N950 has no modem
-+  driver under Leste, so the image no longer starts it with the session.
-+  hildon-desktop's rotation is off as on the N900 (`19disable-rotation`).
-+- After X is restarted from a shell, its seat is not active and evdev gets
-+  `Permission denied` on every input device; at boot this does not happen.
- - Harmattan's Wi-Fi NVS has no MAC address (wlcore picks a random one);
-   Harmattan reads it from the CAL area.
- - `bq2415x_charger` is blacklisted on p4 and not yet tested
-diff --git a/rootfs/build.sh b/rootfs/build.sh
-index e7b62f3..56771f4 100644
---- a/rootfs/build.sh
-+++ b/rootfs/build.sh
-@@ -18,7 +18,8 @@
- # partition 4 that install/n950-install.sh creates.
- #
- # FM_DEB=<n950-fm .deb> takes apps/n950-fm from a local build instead of
--# its release; KOLIBRI_BIN=<kolibrios-arm's build/n950/kernel.bin> puts
-+# its release, SGX_DEB=<sgx-ddk-um-n950 .deb> the GPU's user space from
-+# sgx/build-deb.sh; KOLIBRI_BIN=<kolibrios-arm's build/n950/kernel.bin> puts
- # KolibriOS at /boot/kolibri.bin, for ubiboot's second "Maemo" entry.
- set -euo pipefail
- REPO=$(cd "$(dirname "$0")/.." && pwd)
-@@ -29,6 +30,7 @@ SIZE_SECTORS=${SIZE_SECTORS:-8388608}		# 4 GiB, partition 4
- ROOT_PW=${ROOT_PW:-n950-leste}
- SSH_PUBKEY=${SSH_PUBKEY:-}
- FM_DEB=${FM_DEB:-}
-+SGX_DEB=${SGX_DEB:-}
- KOLIBRI_BIN=${KOLIBRI_BIN:-}
- HOSTNAME_N950=${HOSTNAME_N950:-n950}
- KOUT=$WORK/out
-@@ -183,6 +185,18 @@ else
- 	sudo -n curl -sfL -o "$DST/tmp/n950-fm.deb" "$FM_URL"
- fi
- in_target "apt-get -q -y install /tmp/n950-fm.deb && rm -f /tmp/n950-fm.deb"
-+# The GPU's user space for the N950's SGX530 1.2.5 (sgx/build-deb.sh):
-+# its release, or a local build
-+SGX_URL=$GH/n950-maemo-leste/releases/download/sgx-ddk-um-n950-1.17.4948957-n950.1/sgx-ddk-um-n950_1.17.4948957-n950.1_armhf.deb
-+if [ -n "$SGX_DEB" ]; then
-+	sudo -n cp "$SGX_DEB" "$DST/tmp/sgx-ddk-um-n950.deb"
-+else
-+	sudo -n curl -sfL -o "$DST/tmp/sgx-ddk-um-n950.deb" "$SGX_URL"
-+fi
-+in_target "apt-get -q -y install /tmp/sgx-ddk-um-n950.deb && rm -f /tmp/sgx-ddk-um-n950.deb"
-+# Leste has no driver for the N950's modem, and without it sphone only
-+# restarts itself over and over: not started with the session
-+in_target "dpkg-divert --quiet --local --rename --add /etc/X11/Xsession.post/70sphone"
- in_target "apt-get -q -y --purge autoremove && apt-get clean"
- in_target "echo 'root:$ROOT_PW' | chpasswd"
- in_target "for s in wl1251-cal gps-nokia-n900; do rc-update del \$s sysinit; rc-update del \$s default; done 2>/dev/null; true"
-diff --git a/rootfs/overlay/etc/X11/Xsession.post/19disable-rotation b/rootfs/overlay/etc/X11/Xsession.post/19disable-rotation
+@@ -261,10 +313,21 @@ not_relocated:	mov	r0, #0
+ 		bls	wont_overwrite
+ 
+ 		mov	r5, r2			@ decompress after malloc space
++		mov	r0, #4			@ n950tr stage 4: about to decompress
++		mov	r1, #1			@ aux0 = 1: relocating path
++		mov	r2, #0
++		bl	n950_tr
+ 		mov	r0, r5
+ 		mov	r3, r7
+ 		bl	decompress_kernel
+ 
++		mov	r9, r0			@ n950tr stage 5: decompressed (aux0 = length)
++		mov	r1, r0
++		mov	r0, #5
++		mov	r2, #1
++		bl	n950_tr
++		mov	r0, r9
++
+ 		add	r0, r0, #127 + 128	@ alignment + stack
+ 		bic	r0, r0, #127		@ align the kernel length
+ /*
+@@ -300,11 +363,20 @@ not_relocated:	mov	r0, #0
+  * r4     = kernel execution address
+  * r7     = architecture ID
+  */
+-wont_overwrite:	mov	r0, r4
++wont_overwrite:	mov	r0, #4			@ n950tr stage 4: about to decompress
++		mov	r1, #0			@ aux0 = 0: in-place path
++		mov	r2, #0
++		bl	n950_tr
++		mov	r0, r4
+ 		mov	r3, r7
+ 		bl	decompress_kernel
++		mov	r1, r0			@ n950tr stage 5: decompressed (aux0 = length)
++		mov	r0, #5
++		mov	r2, #0
++		bl	n950_tr
+ 		b	call_kernel
+ 
++
+ 		.align	2
+ 		.type	LC0, #object
+ LC0:		.word	LC0			@ r1
+@@ -571,11 +643,136 @@ reloc_start:	add	r9, r5, r0
+ 
+ call_kernel:	bl	cache_clean_flush
+ 		bl	cache_off
++		mov	r0, #6			@ n950tr stage 6: jumping to the kernel
++		mov	r1, r4
++		mov	r2, r8
++		bl	n950_tr
+ 		mov	r0, #0			@ must be zero
+ 		mov	r1, r7			@ restore architecture number
+ 		mov	r2, r8			@ restore atags pointer
+ 		mov	pc, r4			@ call kernel
+ 
++/*
++ * n950tr - N950 boot tracer (decompressor side).
++ *
++ *  r0 = stage (0..31), r1 = aux0, r2 = aux1.  Clobbers r0-r3, r12, lr.
++ *  Needs no stack.  Works with the MMU off, or on with a 1:1 mapping
++ *  (kexec from a 2.6.32 kernel leaves the MMU on, identity mapped up to
++ *  TASK_SIZE; both addresses below are inside that range).
++ *
++ *  1. RAM record at N950TR_DDR (physical, 8 words):
++ *       +0 magic "N9TR", +4 bitmask of stages seen, +8 last stage,
++ *       +12 aux0, +16 aux1, +20 call counter, +24 OneNAND CTRL_STATUS
++ *       after the last PROG, +28 WP_STATUS after the last UNLOCK.
++ *  2. OneNAND: program page <stage> of flash block N950TR_FBA (inside the
++ *     "log" partition mtd3, which is erased before a test) with the
++ *     page header "N9TR", stage, aux0, aux1 and the fill pattern
++ *     0xA500|stage.  Samsung KFM4G16Q2M (0x50), 4 KiB pages, single
++ *     plane; the sequence is the one onenand_base.c uses for PROG.
++ *     Both waits are bounded so a dead chip cannot hang the boot.
++ */
++
++		.globl	n950_tr
++		.type	n950_tr, #function
++n950_tr:
++		ldr	r3, =N950TR_DDR
++		ldr	r12, =0x4E395452
++		str	r12, [r3, #0]
++		str	r1, [r3, #12]
++		str	r2, [r3, #16]
++		and	r1, r0, #0x1f
++		mov	r2, #1
++		mov	r2, r2, lsl r1
++		ldr	r12, [r3, #4]
++		orr	r12, r12, r2
++		str	r12, [r3, #4]
++		str	r0, [r3, #8]
++		ldr	r12, [r3, #20]
++		add	r12, r12, #1
++		str	r12, [r3, #20]
++		@ save aux0/aux1 for the page header
++		mov	r3, r1			@ r3 = stage & 0x1f (page number)
++		ldr	r12, =N950TR_ONENAND
++		add	r12, r12, #0x1E000
++		add	r12, r12, #0x400	@ r12 = &regs[0xF200] (START_BUFFER)
++		ldr	r1, =0x100000
++1:		ldrh	r2, [r12, #0x82]	@ INTERRUPT
++		tst	r2, #0x8000		@ INT_MASTER: ready?
++		bne	2f
++		subs	r1, r1, #1
++		bne	1b
++2:		@ unlock the block first (power-on state is locked; a PROG to a
++		@ locked block completes silently without writing anything)
++		sub	r1, r12, #0x200		@ r1 = &regs[0xF100]
++		mov	r0, #N950TR_FBA
++		strh	r0, [r1, #0]		@ START_ADDRESS1
++		mov	r0, #0
++		strh	r0, [r1, #2]		@ START_ADDRESS2
++		mov	r0, #N950TR_FBA
++		strh	r0, [r12, #0x98]	@ START_BLOCK_ADDRESS (0xF24C)
++		mov	r0, #0
++		strh	r0, [r12, #0x82]	@ INTERRUPT clear
++		mov	r0, #0x23
++		strh	r0, [r12, #0x40]	@ COMMAND = UNLOCK
++		ldr	r1, =0x100000
++7:		ldrh	r2, [r12, #0x82]
++		tst	r2, #0x8000
++		bne	8f
++		subs	r1, r1, #1
++		bne	7b
++8:		ldrh	r2, [r12, #0x9C]	@ WP_STATUS -> RAM record +28
++		ldr	r1, =N950TR_DDR
++		str	r2, [r1, #28]
++		@ fill DataRAM0 main area (4 KiB) with 0xA500|stage
++		orr	r0, r3, #0xA500
++		ldr	r1, =N950TR_ONENAND + 0x400
++		add	r2, r1, #0x1000
++3:		strh	r0, [r1], #2
++		cmp	r1, r2
++		blo	3b
++		ldr	r1, =N950TR_ONENAND + 0x400
++		ldr	r2, =0x4E395452
++		str	r2, [r1, #0]		@ page header: magic
++		str	r3, [r1, #4]		@ stage
++		ldr	r2, =N950TR_DDR
++		ldr	r0, [r2, #12]
++		str	r0, [r1, #8]		@ aux0
++		ldr	r0, [r2, #16]
++		str	r0, [r1, #12]		@ aux1
++		@ spare area (128 bytes) = 0xFF
++		ldr	r1, =N950TR_ONENAND + 0x10020
++		add	r2, r1, #0x80
++		mvn	r0, #0
++4:		strh	r0, [r1], #2
++		cmp	r1, r2
++		blo	4b
++		@ addresses, then command
++		sub	r1, r12, #0x200		@ r1 = &regs[0xF100] (START_ADDRESS1)
++		mov	r0, #N950TR_FBA
++		strh	r0, [r1, #0]		@ START_ADDRESS1: DFS=0, FBA
++		mov	r0, #0
++		strh	r0, [r1, #2]		@ START_ADDRESS2: DBS=0
++		mov	r0, r3, lsl #2		@ FPA = stage, FSA = 0
++		strh	r0, [r1, #0xE]		@ START_ADDRESS8
++		mov	r0, #0x800
++		strh	r0, [r12, #0]		@ START_BUFFER: BSA=DataRAM0, BSC=0
++		mov	r0, #0
++		strh	r0, [r12, #0x82]	@ INTERRUPT clear
++		mov	r0, #0x80
++		strh	r0, [r12, #0x40]	@ COMMAND = PROG
++		ldr	r1, =0x100000
++5:		ldrh	r2, [r12, #0x82]
++		tst	r2, #0x8000
++		bne	6f
++		subs	r1, r1, #1
++		bne	5b
++6:		ldrh	r2, [r12, #0x80]	@ CTRL_STATUS after PROG -> RAM record +24
++		ldr	r1, =N950TR_DDR
++		str	r2, [r1, #24]
++		mov	pc, lr
++		.size	n950_tr, . - n950_tr
++		.ltorg
++
+ /*
+  * Here follow the relocatable cache support functions for the
+  * various processors.  This is a generic hook for locating an
+diff --git a/arch/arm/boot/compressed/misc.c b/arch/arm/boot/compressed/misc.c
+index 96282945..0c2e0bdc 100644
+--- a/arch/arm/boot/compressed/misc.c
++++ b/arch/arm/boot/compressed/misc.c
+@@ -168,8 +168,11 @@ unsigned long free_mem_end_ptr;
+ #define arch_error(x)
+ #endif
+ 
++extern void n950_tr(unsigned long stage, unsigned long aux0, unsigned long aux1);
++
+ void error(char *x)
+ {
++	n950_tr(26, 0, 0);	/* n950tr stage 26: decompressor error() */
+ 	arch_error(x);
+ 
+ 	putstr("\n\n");
+diff --git a/arch/arm/include/asm/n950trace.h b/arch/arm/include/asm/n950trace.h
 new file mode 100644
-index 0000000..0fc0053
+index 00000000..f5982526
 --- /dev/null
-+++ b/rootfs/overlay/etc/X11/Xsession.post/19disable-rotation
-@@ -0,0 +1,5 @@
-+# N950 (sourced by Xsession-post), as leste-config-n900 does for the N900:
-+# X cannot rotate the screen here (the panel turns the picture into
-+# landscape itself, the OMAP3's display controller has no rotation), so
-+# hildon-desktop must not try to go portrait when the accelerometer says so.
-+gconftool-2 --set --type bool /apps/osso/hildon-desktop/ui_can_rotate false
-diff --git a/sgx/build-deb.sh b/sgx/build-deb.sh
++++ b/arch/arm/include/asm/n950trace.h
+@@ -0,0 +1,75 @@
++/*
++ * n950trace.h - Nokia N950 (RM-680) boot tracer
++ *
++ * Debug aid for the "Harmattan 2.6.32 dies silently after kexec" problem.
++ * The decompressor, the early assembly and a few C boot stages record a
++ * stage number in two places that can be read back after the device has
++ * reset:
++ *
++ *  1. A RAM record at physical N950TR_DDR_PA (8 words):
++ *       +0  magic 0x4E395452 ("RT9N" in a hexdump)
++ *       +4  bitmask of stages seen (bit n = stage n)
++ *       +8  last stage, +12 aux0, +16 aux1, +20 call counter,
++ *       +24 OneNAND CTRL_STATUS after the last PROG (bit 10 = error,
++ *           bit 14 = locked), +28 WP_STATUS after the last UNLOCK
++ *           (0x4 unlocked, 0x2 locked, 0x1 lock-tight)
++ *     Survives a reset only if DDR keeps its contents; cheap to try.
++ *
++ *  2. OneNAND: the block is unlocked, then page <stage> of flash block
++ *     N950TR_FBA is programmed with
++ *     the header "N9TR", stage, aux0, aux1 and the fill pattern
++ *     0xA500|stage.  Block 80 is the second block of the "log" partition
++ *     (mtd3 = 2048k@20224k, 256 KiB blocks), i.e. mtd3 offset 0x40000;
++ *     mtdoops uses it only after four oopses.  Erase mtd3 before a test:
++ *       flash_erase /dev/mtd3 0 8
++ *     and read back afterwards with
++ *       dd if=/dev/mtd3 bs=4096 skip=64 count=32 | hexdump -C
++ *     This survives anything, including a battery pull.
++ *
++ * Stages (page numbers):
++ *   decompressor: 1 entry, 2 image checksum OK (31 = checksum FAILED,
++ *     aux0 computed / aux1 expected), 3 caches on, 4 before decompress
++ *     (aux0: 1 = relocating path), 5 after decompress (aux0 = length),
++ *     6 jumping to the kernel (aux0 = entry, aux1 = atags), 26 error()
++ *   kernel asm: 7 stext, 8 page tables built, 9 __enable_mmu,
++ *     10 __mmap_switched, 28/29/30 __error_p/__error_a/__error
++ *   kernel C: 11 start_kernel, 12 before paging_init, 13 after paging_init,
++ *     14 after setup_arch, 15 after mm_init, 16 after init_IRQ,
++ *     17 after time_init, 18 after console_init, 19 rest_init,
++ *     20 kernel_init, 21 before do_basic_setup, 22 omap3_pm_init entry,
++ *     23 omap3_pm_init exit (aux0 = ret), 24 after do_basic_setup,
++ *     25 init_post before exec of init, 27 die(), 0 panic()
++ */
++#ifndef __ASM_ARM_N950TRACE_H
++#define __ASM_ARM_N950TRACE_H
++
++#define N950TR_ONENAND_PA	0x04000000	/* GPMC CS0, see ubiboot dmesg */
++#define N950TR_ONENAND_VA	0xF9000000	/* free slot between L3 and L4 */
++#define N950TR_DDR_PA		0x9F000000	/* mid RAM, below TASK_SIZE */
++#define N950TR_DDR_VA		0xF9100000
++#define N950TR_FBA		80		/* flash block = mtd3 + 256 KiB */
++/* section descriptor: AP=11, TEX/C/B=0 (strongly ordered), XN */
++#define N950TR_SECT_FLAGS	0x00000C12
++
++#ifdef __ASSEMBLY__
++
++	.macro	n950_trk_phys, stage
++	ldr	r6, =N950TR_ONENAND_PA
++	ldr	r7, =N950TR_DDR_PA
++	mov	r12, #\stage
++	bl	n950_trk
++	.endm
++
++	.macro	n950_trk_virt, stage
++	ldr	r6, =N950TR_ONENAND_VA
++	ldr	r7, =N950TR_DDR_VA
++	mov	r12, #\stage
++	bl	n950_trk
++	.endm
++
++#else
++
++void n950_trace(unsigned int stage, unsigned int aux0, unsigned int aux1);
++
++#endif /* __ASSEMBLY__ */
++#endif
+diff --git a/arch/arm/kernel/Makefile b/arch/arm/kernel/Makefile
+index 8fe784f5..0c5cc56a 100644
+--- a/arch/arm/kernel/Makefile
++++ b/arch/arm/kernel/Makefile
+@@ -15,7 +15,7 @@ CFLAGS_REMOVE_return_address.o = -pg
+ 
+ obj-y		:= compat.o elf.o entry-armv.o entry-common.o irq.o \
+ 		   process.o ptrace.o return_address.o setup.o signal.o \
+-		   sys_arm.o stacktrace.o time.o traps.o
++		   sys_arm.o stacktrace.o time.o traps.o n950trace.o
+ 
+ obj-$(CONFIG_OC_ETM)		+= etm.o
+ 
+diff --git a/arch/arm/kernel/head-common.S b/arch/arm/kernel/head-common.S
+index 5315d240..4e241518 100644
+--- a/arch/arm/kernel/head-common.S
++++ b/arch/arm/kernel/head-common.S
+@@ -61,6 +61,7 @@ __mmap_switched:
+ 	str	r2, [r6]			@ Save atags pointer
+ 	bic	r4, r0, #CR_A			@ Clear 'A' bit
+ 	stmia	r7, {r0, r4}			@ Save control register values
++	n950_trk_virt	10			@ n950tr stage 10: MMU on, C ready
+ 	b	start_kernel
+ ENDPROC(__mmap_switched)
+ 
+@@ -74,6 +75,7 @@ ENDPROC(__mmap_switched)
+  * machine ID for example).
+  */
+ __error_p:
++	n950_trk_phys	28			@ n950tr stage 28: unknown processor
+ #ifdef CONFIG_DEBUG_LL
+ 	adr	r0, str_p1
+ 	bl	printascii
+@@ -89,6 +91,7 @@ str_p2:	.asciz	").\n"
+ ENDPROC(__error_p)
+ 
+ __error_a:
++	n950_trk_phys	29			@ n950tr stage 29: unknown machine ID
+ #ifdef CONFIG_DEBUG_LL
+ 	mov	r4, r1				@ preserve machine ID
+ 	adr	r0, str_a1
+@@ -126,6 +129,7 @@ str_a3:	.asciz	"\nPlease check your kernel config and/or bootloader.\n"
+ #endif
+ 
+ __error:
++	n950_trk_phys	30			@ n950tr stage 30: early boot error
+ #ifdef CONFIG_ARCH_RPC
+ /*
+  * Turn the screen red on a error - RiscPC only.
+diff --git a/arch/arm/kernel/head.S b/arch/arm/kernel/head.S
+index 38ccbe1d..01c191f5 100644
+--- a/arch/arm/kernel/head.S
++++ b/arch/arm/kernel/head.S
+@@ -21,6 +21,7 @@
+ #include <asm/memory.h>
+ #include <asm/thread_info.h>
+ #include <asm/system.h>
++#include <asm/n950trace.h>
+ 
+ #if (PHYS_OFFSET & 0x001fffff)
+ #error "PHYS_OFFSET must be at an even 2MiB boundary!"
+@@ -78,6 +79,7 @@
+ ENTRY(stext)
+ 	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9 @ ensure svc mode
+ 						@ and irqs disabled
++	n950_trk_phys	7			@ n950tr stage 7: kernel entry
+ 	mrc	p15, 0, r9, c0, c0		@ get processor id
+ 	bl	__lookup_processor_type		@ r5=procinfo r9=cpuid
+ 	movs	r10, r5				@ invalid processor (r5=0)?
+@@ -87,6 +89,7 @@ ENTRY(stext)
+ 	beq	__error_a			@ yes, error 'a'
+ 	bl	__vet_atags
+ 	bl	__create_page_tables
++	n950_trk_phys	8			@ n950tr stage 8: page tables built
+ 
+ 	/*
+ 	 * The following calls CPU specific code in a position independent
+@@ -158,6 +161,7 @@ __secondary_data:
+  * registers.
+  */
+ __enable_mmu:
++	n950_trk_phys	9			@ n950tr stage 9: cpu setup done
+ #ifdef CONFIG_ALIGNMENT_TRAP
+ 	orr	r0, r0, #CR_A
+ #else
+@@ -329,8 +333,111 @@ __create_page_tables:
+ 	str	r3, [r0]
+ #endif
+ #endif
++	/*
++	 * n950tr: map the OneNAND window and the RAM trace page as
++	 * strongly-ordered sections at N950TR_ONENAND_VA / N950TR_DDR_VA so
++	 * the tracer works from __mmap_switched until paging_init() rebuilds
++	 * the same two mappings from omap34xx_io_desc[].
++	 */
++	add	r0, r4, #N950TR_ONENAND_VA >> 18
++	ldr	r3, =N950TR_ONENAND_PA | N950TR_SECT_FLAGS
++	str	r3, [r0], #4
++	ldr	r3, =N950TR_DDR_PA | N950TR_SECT_FLAGS
++	str	r3, [r0]
+ 	mov	pc, lr
+ ENDPROC(__create_page_tables)
+ 	.ltorg
+ 
++/*
++ * n950tr - N950 boot tracer (kernel side), see n950trace.h.
++ *
++ *  r12 = stage, r6 = OneNAND window base, r7 = RAM record base (physical
++ *  before the MMU is on, virtual afterwards).  Clobbers r3, r5, r11;
++ *  r6, r7, r12 are read only.  Leaf routine, needs no stack.  Same record/page layout as
++ *  n950_tr in arch/arm/boot/compressed/head.S.
++ */
++	.type	n950_trk, #function
++n950_trk:
++	ldr	r3, =0x4E395452
++	str	r3, [r7, #0]			@ magic
++	mov	r3, #1
++	mov	r3, r3, lsl r12
++	ldr	r5, [r7, #4]
++	orr	r5, r5, r3
++	str	r5, [r7, #4]			@ bitmask |= 1 << stage
++	str	r12, [r7, #8]			@ last stage
++	mov	r3, #0
++	str	r3, [r7, #12]
++	str	r3, [r7, #16]
++	ldr	r5, [r7, #20]
++	add	r5, r5, #1
++	str	r5, [r7, #20]			@ counter
++	add	r11, r6, #0x1E000
++	add	r11, r11, #0x400		@ r11 = &regs[0xF200]
++	ldr	r5, =0x100000
++1:	ldrh	r3, [r11, #0x82]		@ INTERRUPT: wait until ready
++	tst	r3, #0x8000
++	bne	2f
++	subs	r5, r5, #1
++	bne	1b
++2:	sub	r5, r11, #0x200			@ unlock the block: r5 = &regs[0xF100]
++	mov	r3, #N950TR_FBA
++	strh	r3, [r5, #0]			@ START_ADDRESS1
++	mov	r3, #0
++	strh	r3, [r5, #2]			@ START_ADDRESS2
++	mov	r3, #N950TR_FBA
++	strh	r3, [r11, #0x98]		@ START_BLOCK_ADDRESS
++	mov	r3, #0
++	strh	r3, [r11, #0x82]		@ INTERRUPT clear
++	mov	r3, #0x23
++	strh	r3, [r11, #0x40]		@ COMMAND = UNLOCK
++	ldr	r5, =0x100000
++7:	ldrh	r3, [r11, #0x82]
++	tst	r3, #0x8000
++	bne	8f
++	subs	r5, r5, #1
++	bne	7b
++8:	ldrh	r3, [r11, #0x9C]		@ WP_STATUS -> RAM record +28
++	str	r3, [r7, #28]
++	orr	r3, r12, #0xA500
++	add	r5, r6, #0x400			@ DataRAM0 main, fill up to r6 + 0x1400
++3:	strh	r3, [r5], #2
++	tst	r5, #0x1000
++	beq	3b
++	add	r5, r6, #0x400
++	ldr	r3, =0x4E395452
++	str	r3, [r5, #0]			@ page header: magic
++	str	r12, [r5, #4]			@ stage
++	add	r5, r6, #0x10000
++	add	r5, r5, #0x20			@ SpareRAM, 128 bytes up to r6 + 0x100A0
++	mvn	r3, #0
++4:	strh	r3, [r5], #2
++	tst	r5, #0x80
++	beq	4b
++	sub	r5, r11, #0x200			@ r5 = &regs[0xF100]
++	mov	r3, #N950TR_FBA
++	strh	r3, [r5, #0]			@ START_ADDRESS1: DFS=0, FBA
++	mov	r3, #0
++	strh	r3, [r5, #2]			@ START_ADDRESS2: DBS=0
++	and	r3, r12, #0x3f
++	mov	r3, r3, lsl #2
++	strh	r3, [r5, #0xE]			@ START_ADDRESS8: FPA, FSA=0
++	mov	r3, #0x800
++	strh	r3, [r11, #0]			@ START_BUFFER: DataRAM0, whole page
++	mov	r3, #0
++	strh	r3, [r11, #0x82]		@ INTERRUPT clear
++	mov	r3, #0x80
++	strh	r3, [r11, #0x40]		@ COMMAND = PROG
++	ldr	r5, =0x100000
++5:	ldrh	r3, [r11, #0x82]
++	tst	r3, #0x8000
++	bne	6f
++	subs	r5, r5, #1
++	bne	5b
++6:	ldrh	r3, [r11, #0x80]		@ CTRL_STATUS after PROG -> RAM record +24
++	str	r3, [r7, #24]
++	mov	pc, lr
++	.size	n950_trk, . - n950_trk
++	.ltorg
++
+ #include "head-common.S"
+diff --git a/arch/arm/kernel/n950trace.c b/arch/arm/kernel/n950trace.c
 new file mode 100644
-index 0000000..a978938
+index 00000000..3ca14591
 --- /dev/null
-+++ b/sgx/build-deb.sh
-@@ -0,0 +1,142 @@
-+#!/bin/bash
-+# The N950's PowerVR user space as an armhf .deb, sgx-ddk-um-n950.
-+#
-+#   OUT=<dir> [TI=<clone of omap5-sgx-ddk-um-linux>] bash sgx/build-deb.sh
-+#
-+# The N950's SGX530 is revision 1.2.5; Leste's sgx-ddk-um-ti343x carries the
-+# N900's user space (1.2.1), which the kernel module refuses. TI's DDK
-+# 1.17.4948957 build for the AM335x (ti335x) is for the same SGX530 1.2.5.
-+# The package puts its GPU libraries and pvrsrvctl in place of
-+# sgx-ddk-um-ti343x's (dpkg-divert, so removing it brings those back).
-+# Leste's own libdbm, pvrsrvinit and the library links stay those of
-+# sgx-ddk-um-ti343x: TI's libdbm accepts only the AM335x's display driver
-+# (tilcdc), Leste's the N950's (omapdrm).
-+#
-+# Without TI the script fetches TI's repository (only the files it needs)
-+# into $OUT/ti-src. The files are checked against the sums of the ones
-+# tested on an N950. No packaging tools beyond tar, xz and ar are needed.
-+set -euo pipefail
-+OUT=${OUT:?set OUT=<directory for the .deb>}
-+TI=${TI:-}
-+URL=https://git.ti.com/git/graphics/omap5-sgx-ddk-um-linux.git
-+BRANCH=1.17.4948957/mesa/glibc-2.35
-+COMMIT=84a396a4fb379f10931421e489ac8a199d6a9f2c
-+REL=targetfs/ti335x_linux/lws-generic/release
-+PKG=sgx-ddk-um-n950
-+VERSION=1.17.4948957-n950.1
-+LIBDIR=usr/lib/arm-linux-gnueabihf
-+log() { echo ">> $*"; }
++++ b/arch/arm/kernel/n950trace.c
+@@ -0,0 +1,74 @@
++/*
++ * n950trace.c - Nokia N950 boot tracer, C side.  See <asm/n950trace.h>.
++ *
++ * Uses only the two static mappings set up by head.S (before paging_init)
++ * and by omap34xx_io_desc[] (afterwards).  Not __init: it is also called
++ * from panic()/die() and from init_post() after free_initmem().
++ */
++#include <linux/types.h>
++#include <linux/compiler.h>
++#include <asm/n950trace.h>
 +
-+# file in TI's release tree, sha256 of the version tested on the N950
-+FILES=(
-+	"usr/bin/pvrsrvctl c2adbdf3aaa13edc9461264f2ce78bb7053ee29f159bd35534ccf6e58e75037d"
-+	"usr/lib/libGLESv1_PVR_MESA.so.1.17.4948957 3838c56888967bda42b3d5bb412cec17890bcc251b453ac598698199638bb3f7"
-+	"usr/lib/libGLESv2_PVR_MESA.so.1.17.4948957 d5c3d8ffaf66a00b794a053609abfd3d2a28bb9ad82e39835796bf0037e5664b"
-+	"usr/lib/libPVRScopeServices.so.1.17.4948957 e76fd84b680133433a91775dc516bb729fa2f7f71550f4ab481c4ca1ce7ebd15"
-+	"usr/lib/libglslcompiler.so.1.17.4948957 724f104da6e5a2e9a600aafe703edf02c1035971a13d2e7162cbbaef76a561a4"
-+	"usr/lib/libpvr2d.so.1.17.4948957 7a54f6746cbb7ea711efde0e2105c0df9c1cf1ed18f6f374277294d622470891"
-+	"usr/lib/libpvr_dri_support.so.1.17.4948957 b7267e4436bc220cc5a291fd60c3cc9133660750172f7a7f6d6aa5d23e07becf"
-+	"usr/lib/libsrv_init.so.1.17.4948957 1ffaea6766c81c5d2a73d726ca30d7f9bcd37c9fbd0d32f2b3ec507705146aac"
-+	"usr/lib/libsrv_um.so.1.17.4948957 97ad164587f09b2dd75079e75d98a17f51bcbf049cd3727d7a790895f7856072"
-+	"usr/lib/libusc.so.1.17.4948957 42fc3803dfdd5f3518fbe631be3c7bc1b1ca2046d1e7892daa09ea04d1ac3a6c"
-+)
++#define MAGIC	0x4E395452u
 +
-+mkdir -p "$OUT"
-+OUT=$(cd "$OUT" && pwd)
-+if [ -z "$TI" ]; then
-+	TI=$OUT/ti-src
-+	if [ ! -d "$TI/.git" ]; then
-+		log "fetch TI's $BRANCH (no blobs but the ones needed)"
-+		git init -q "$TI"
-+		git -C "$TI" remote add origin "$URL"
-+		git -C "$TI" fetch -q --filter=blob:none origin "$BRANCH"
-+		git -C "$TI" sparse-checkout set --no-cone "/$REL/" /LICENSE
-+	fi
-+	git -C "$TI" checkout -q "$COMMIT"
-+fi
-+[ "$(git -C "$TI" rev-parse HEAD)" = "$COMMIT" ] ||
-+	{ echo "$TI is not at $COMMIT"; exit 1; }
++static inline void w16(unsigned long a, u16 v) { *(volatile u16 *)a = v; }
++static inline u16 r16(unsigned long a) { return *(volatile u16 *)a; }
++static inline void w32(unsigned long a, u32 v) { *(volatile u32 *)a = v; }
++static inline u32 r32(unsigned long a) { return *(volatile u32 *)a; }
 +
-+W=$OUT/$PKG-build
-+rm -rf "$W"
-+mkdir -p "$W/root/$LIBDIR" "$W/root/usr/bin" "$W/root/usr/share/doc/$PKG" "$W/control"
-+
-+# The installed paths, for the diversions
-+DIVERTED=()
-+for entry in "${FILES[@]}"; do
-+	f=${entry% *}
-+	sum=${entry#* }
-+	echo "$sum  $TI/$REL/$f" | sha256sum --quiet -c -
-+	case $f in
-+	usr/bin/*) dst=usr/bin/${f##*/}; mode=755 ;;
-+	*) dst=$LIBDIR/${f##*/}; mode=644 ;;
-+	esac
-+	install -m "$mode" "$TI/$REL/$f" "$W/root/$dst"
-+	DIVERTED+=("/$dst")
-+done
-+
++noinline void n950_trace(unsigned int stage, unsigned int aux0,
++			 unsigned int aux1)
 +{
-+	echo "$PKG: TI's PowerVR SGX DDK 1.17.4948957 user space, ti335x build,"
-+	echo "from $URL"
-+	echo "(branch $BRANCH, commit $COMMIT, $REL), unmodified."
-+	echo "It is licensed for use with TI devices only; the N950's OMAP3630 is one."
-+	echo
-+	cat "$TI/LICENSE"
-+} > "$W/root/usr/share/doc/$PKG/copyright"
-+chmod 644 "$W/root/usr/share/doc/$PKG/copyright"
++	const unsigned long on = N950TR_ONENAND_VA;
++	const unsigned long ddr = N950TR_DDR_VA;
++	unsigned long i;
 +
-+cat > "$W/control/control" <<EOF
-+Package: $PKG
-+Version: $VERSION
-+Architecture: armhf
-+Maintainer: Sebastian Matkovich <sebastian.matkovich@gmail.com>
-+Depends: sgx-ddk-um-ti343x (>= 1.17.4948957)
-+Section: libs
-+Priority: optional
-+Installed-Size: $(du -sk "$W/root" | cut -f1)
-+Description: PowerVR SGX530 1.2.5 user space for the Nokia N950
-+ TI's DDK 1.17.4948957 for the AM335x (ti335x), the same SGX530 revision as
-+ the N950's OMAP3630, in place of the GPU libraries and pvrsrvctl of
-+ sgx-ddk-um-ti343x (the N900's revision 1.2.1, which the kernel module
-+ refuses). Leste's libdbm and pvrsrvinit stay in use. The GPU starts with
-+ its new user space on the next boot.
-+EOF
++	stage &= 0x1f;
 +
-+list=${DIVERTED[*]}
-+cat > "$W/control/preinst" <<EOF
-+#!/bin/sh
-+set -e
-+if [ "\$1" = install ] || [ "\$1" = upgrade ]; then
-+	for f in $list; do
-+		dpkg-divert --quiet --package $PKG --add --rename --divert "\$f.ti343x" "\$f"
-+	done
-+fi
-+EOF
-+cat > "$W/control/postrm" <<EOF
-+#!/bin/sh
-+set -e
-+if [ "\$1" = remove ] || [ "\$1" = abort-install ] || [ "\$1" = disappear ]; then
-+	for f in $list; do
-+		dpkg-divert --quiet --package $PKG --remove --rename --divert "\$f.ti343x" "\$f"
-+	done
-+fi
-+EOF
-+cat > "$W/control/postinst" <<'EOF'
-+#!/bin/sh
-+set -e
-+[ "$1" = configure ] && ldconfig
-+exit 0
-+EOF
-+chmod 755 "$W/control/preinst" "$W/control/postrm" "$W/control/postinst"
-+(cd "$W/root" && find . -type f ! -path './DEBIAN/*' -printf '%P\n' | sort |
-+	xargs md5sum) > "$W/control/md5sums"
++	/* RAM record */
++	w32(ddr + 0, MAGIC);
++	w32(ddr + 12, aux0);
++	w32(ddr + 16, aux1);
++	w32(ddr + 4, r32(ddr + 4) | (1u << stage));
++	w32(ddr + 8, stage);
++	w32(ddr + 20, r32(ddr + 20) + 1);
 +
-+TAR=(tar --owner=0 --group=0 --numeric-owner --sort=name --mtime=@0)
-+"${TAR[@]}" -C "$W/control" -cJf "$W/control.tar.xz" .
-+"${TAR[@]}" -C "$W/root" -cJf "$W/data.tar.xz" ./usr
-+echo 2.0 > "$W/debian-binary"
-+DEB=$OUT/${PKG}_${VERSION}_armhf.deb
-+rm -f "$DEB"
-+(cd "$W" && ar -rcD "$DEB" debian-binary control.tar.xz data.tar.xz)
-+rm -rf "$W"
-+log "$DEB"
++	/* OneNAND: wait until the chip is idle (bounded) */
++	for (i = 0; i < 0x100000; i++)
++		if (r16(on + 0x1E482) & 0x8000)
++			break;
++
++	/* unlock the block (power-on state is locked; harmless if unlocked) */
++	w16(on + 0x1E200, N950TR_FBA);		/* START_ADDRESS1 */
++	w16(on + 0x1E202, 0);			/* START_ADDRESS2 */
++	w16(on + 0x1E498, N950TR_FBA);		/* START_BLOCK_ADDRESS */
++	w16(on + 0x1E482, 0);			/* INTERRUPT clear */
++	w16(on + 0x1E440, 0x23);		/* COMMAND: UNLOCK */
++	for (i = 0; i < 0x100000; i++)
++		if (r16(on + 0x1E482) & 0x8000)
++			break;
++	w32(ddr + 28, r16(on + 0x1E49C));	/* WP_STATUS */
++
++	/* DataRAM0 main area, 4 KiB */
++	for (i = 0; i < 0x1000; i += 2)
++		w16(on + 0x400 + i, 0xA500 | stage);
++	w32(on + 0x400, MAGIC);
++	w32(on + 0x404, stage);
++	w32(on + 0x408, aux0);
++	w32(on + 0x40C, aux1);
++	/* SpareRAM, 128 bytes */
++	for (i = 0; i < 0x80; i += 2)
++		w16(on + 0x10020 + i, 0xFFFF);
++
++	w16(on + 0x1E200, N950TR_FBA);		/* START_ADDRESS1: DFS=0, FBA */
++	w16(on + 0x1E202, 0);			/* START_ADDRESS2: DBS=0 */
++	w16(on + 0x1E20E, (stage & 0x3f) << 2);	/* START_ADDRESS8: FPA, FSA=0 */
++	w16(on + 0x1E400, 0x0800);		/* START_BUFFER: DataRAM0, page */
++	w16(on + 0x1E482, 0);			/* INTERRUPT clear */
++	w16(on + 0x1E440, 0x80);		/* COMMAND: PROG */
++
++	for (i = 0; i < 0x100000; i++)
++		if (r16(on + 0x1E482) & 0x8000)
++			break;
++	w32(ddr + 24, r16(on + 0x1E480));	/* CTRL_STATUS after PROG */
++}
+diff --git a/arch/arm/kernel/setup.c b/arch/arm/kernel/setup.c
+index 0f61346c..244d0b5f 100644
+--- a/arch/arm/kernel/setup.c
++++ b/arch/arm/kernel/setup.c
+@@ -49,6 +49,7 @@
+ #include "compat.h"
+ #include "atags.h"
+ #include "tcm.h"
++#include <asm/n950trace.h>
+ 
+ #ifndef MEM_SIZE
+ #define MEM_SIZE	(16*1024*1024)
+@@ -823,7 +824,9 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	arm_memblock_init(&meminfo, mdesc);
+ 
++	n950_trace(12, 0, 0);	/* n950tr: before paging_init */
+ 	paging_init(mdesc);
++	n950_trace(13, 0, 0);	/* n950tr: after paging_init */
+ 	request_standard_resources(&meminfo, mdesc);
+ 
+ #ifdef CONFIG_SMP
+diff --git a/arch/arm/kernel/traps.c b/arch/arm/kernel/traps.c
+index e8788a00..1553a7c0 100644
+--- a/arch/arm/kernel/traps.c
++++ b/arch/arm/kernel/traps.c
+@@ -31,6 +31,7 @@
+ 
+ #include "ptrace.h"
+ #include "signal.h"
++#include <asm/n950trace.h>
+ 
+ static const char *handler[]= { "prefetch abort", "data abort", "address exception", "interrupt" };
+ 
+@@ -254,6 +255,7 @@ NORET_TYPE void die(const char *str, struct pt_regs *regs, int err)
+ {
+ 	struct thread_info *thread = current_thread_info();
+ 
++	n950_trace(27, err, regs ? regs->ARM_pc : 0);	/* n950tr: die() */
+ 	oops_enter();
+ 
+ 	spin_lock_irq(&die_lock);
+diff --git a/arch/arm/mach-omap2/board-rm680.c b/arch/arm/mach-omap2/board-rm680.c
+index 6b17015a..8fd36978 100644
+--- a/arch/arm/mach-omap2/board-rm680.c
++++ b/arch/arm/mach-omap2/board-rm680.c
+@@ -17,6 +17,8 @@
+ #include <linux/gpio.h>
+ #include <linux/clk.h>
+ #include <linux/usb/musb.h>
++#include <linux/memblock.h>
++#include <asm/n950trace.h>
+ 
+ #include <mach/hardware.h>
+ #include <asm/mach-types.h>
+@@ -371,6 +373,8 @@ static void __init rm680_map_io(void)
+ 
+ static void __init rm680_reserve(void)
+ {
++	/* n950tr: keep the boot tracer's RAM record out of the allocator */
++	memblock_reserve(N950TR_DDR_PA, SZ_1M);
+ 	rm680_video_mem_init();
+ 	omap_reserve();
+ 	pm_alloc_secure_ram();
+diff --git a/arch/arm/mach-omap2/io.c b/arch/arm/mach-omap2/io.c
+index 1f855a2f..187923ca 100644
+--- a/arch/arm/mach-omap2/io.c
++++ b/arch/arm/mach-omap2/io.c
+@@ -22,6 +22,7 @@
+ #include <linux/init.h>
+ #include <linux/io.h>
+ #include <linux/clk.h>
++#include <asm/n950trace.h>
+ #include <linux/omapfb.h>
+ 
+ #include <asm/tlb.h>
+@@ -171,6 +172,18 @@ static struct map_desc omap34xx_io_desc[] __initdata = {
+ 		.length		= L4_EMU_34XX_SIZE,
+ 		.type		= MT_DEVICE
+ 	},
++	{	/* n950tr: OneNAND window for the boot tracer */
++		.virtual	= N950TR_ONENAND_VA,
++		.pfn		= __phys_to_pfn(N950TR_ONENAND_PA),
++		.length		= SZ_1M,
++		.type		= MT_DEVICE
++	},
++	{	/* n950tr: RAM trace record, uncached alias */
++		.virtual	= N950TR_DDR_VA,
++		.pfn		= __phys_to_pfn(N950TR_DDR_PA),
++		.length		= SZ_1M,
++		.type		= MT_DEVICE
++	},
+ };
+ #endif
+ #ifdef	CONFIG_ARCH_OMAP4
+diff --git a/arch/arm/mach-omap2/pm34xx.c b/arch/arm/mach-omap2/pm34xx.c
+index ae9645db..1bc34e4b 100644
+--- a/arch/arm/mach-omap2/pm34xx.c
++++ b/arch/arm/mach-omap2/pm34xx.c
+@@ -59,6 +59,7 @@
+ #include "sdrc.h"
+ #include "omap3-opp.h"
+ #include "sec_hal.h"
++#include <asm/n950trace.h>
+ 
+ static int regset_save_on_suspend;
+ 
+@@ -1397,6 +1398,7 @@ static int __init omap3_pm_init(void)
+ 	if (!cpu_is_omap34xx())
+ 		return -ENODEV;
+ 
++	n950_trace(22, 0, 0);	/* n950tr: omap3_pm_init entry */
+ 	pm_errata_configure();
+ 
+ 	printk(KERN_ERR "Power Management for TI OMAP3.\n");
+@@ -1517,8 +1519,10 @@ static int __init omap3_pm_init(void)
+ 
+ 	omap3_save_scratchpad_contents();
+ err1:
++	n950_trace(23, ret, 1);	/* n950tr: omap3_pm_init exit */
+ 	return ret;
+ err2:
++	n950_trace(23, ret, 2);
+ 	free_irq(INT_34XX_PRCM_MPU_IRQ, NULL);
+ 	list_for_each_entry_safe(pwrst, tmp, &pwrst_list, node) {
+ 		list_del(&pwrst->node);
+diff --git a/init/main.c b/init/main.c
+index 333a0a7f..84831b81 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -76,6 +76,7 @@
+ #include <asm/setup.h>
+ #include <asm/sections.h>
+ #include <asm/cacheflush.h>
++#include <asm/n950trace.h>
+ 
+ #ifdef CONFIG_X86_LOCAL_APIC
+ #include <asm/smp.h>
+@@ -414,6 +415,7 @@ static noinline void __init_refok rest_init(void)
+ {
+ 	int pid;
+ 
++	n950_trace(19, 0, 0);	/* n950tr: rest_init */
+ 	rcu_scheduler_starting();
+ 	/*
+ 	 * We need to spawn init first so that it obtains pid-1, however
+@@ -522,6 +524,7 @@ asmlinkage void __init start_kernel(void)
+ 	char * command_line;
+ 	extern const struct kernel_param __start___param[], __stop___param[];
+ 
++	n950_trace(11, 0, 0);	/* n950tr: start_kernel */
+ 	smp_setup_processor_id();
+ 
+ 	/*
+@@ -552,6 +555,7 @@ asmlinkage void __init start_kernel(void)
+ 	page_address_init();
+ 	printk(KERN_NOTICE "%s", linux_banner);
+ 	setup_arch(&command_line);
++	n950_trace(14, 0, 0);	/* n950tr: after setup_arch */
+ 	mm_init_owner(&init_mm, &init_task);
+ 	setup_command_line(command_line);
+ 	setup_nr_cpu_ids();
+@@ -575,6 +579,7 @@ asmlinkage void __init start_kernel(void)
+ 	sort_main_extable();
+ 	trap_init();
+ 	mm_init();
++	n950_trace(15, 0, 0);	/* n950tr: after mm_init */
+ 	/*
+ 	 * Set up the scheduler prior starting any interrupts (such as the
+ 	 * timer interrupt). Full topology setup happens at smp_init()
+@@ -595,12 +600,14 @@ asmlinkage void __init start_kernel(void)
+ 	/* init some links before init_ISA_irqs() */
+ 	early_irq_init();
+ 	init_IRQ();
++	n950_trace(16, 0, 0);	/* n950tr: after init_IRQ */
+ 	prio_tree_init();
+ 	init_timers();
+ 	hrtimers_init();
+ 	softirq_init();
+ 	timekeeping_init();
+ 	time_init();
++	n950_trace(17, 0, 0);	/* n950tr: after time_init */
+ 	profile_init();
+ 	if (!irqs_disabled())
+ 		printk(KERN_CRIT "start_kernel(): bug: interrupts were "
+@@ -619,6 +626,7 @@ asmlinkage void __init start_kernel(void)
+ 	 * this. But we do want output early, in case something goes wrong.
+ 	 */
+ 	console_init();
++	n950_trace(18, 0, 0);	/* n950tr: after console_init */
+ 	if (panic_later)
+ 		panic(panic_later, panic_param);
+ 
+@@ -820,6 +828,7 @@ static noinline int init_post(void)
+ 	(void) sys_dup(0);
+ 	(void) sys_dup(0);
+ 
++	n950_trace(25, 0, 0);	/* n950tr: init_post, about to exec init */
+ 	current->signal->flags |= SIGNAL_UNKILLABLE;
+ 
+ 	if (ramdisk_execute_command) {
+@@ -853,6 +862,7 @@ static int __init kernel_init(void * unused)
+ 	 * Wait until kthreadd is all set-up.
+ 	 */
+ 	wait_for_completion(&kthreadd_done);
++	n950_trace(20, 0, 0);	/* n950tr: kernel_init */
+ 	lock_kernel();
+ 
+ 	/*
+@@ -883,7 +893,9 @@ static int __init kernel_init(void * unused)
+ 	smp_init();
+ 	sched_init_smp();
+ 
++	n950_trace(21, 0, 0);	/* n950tr: before do_basic_setup */
+ 	do_basic_setup();
++	n950_trace(24, 0, 0);	/* n950tr: after do_basic_setup */
+ 
+ 	/*
+ 	 * check if there is an early userspace init.  If yes, let it do all
+diff --git a/kernel/panic.c b/kernel/panic.c
+index 5827f7b9..3a3fade4 100644
+--- a/kernel/panic.c
++++ b/kernel/panic.c
+@@ -23,6 +23,7 @@
+ #include <linux/init.h>
+ #include <linux/nmi.h>
+ #include <linux/dmi.h>
++#include <asm/n950trace.h>
+ 
+ int panic_on_oops;
+ static unsigned long tainted_mask;
+@@ -59,6 +60,8 @@ NORET_TYPE void panic(const char * fmt, ...)
+ 	va_list args;
+ 	long i;
+ 
++	n950_trace(0, 0, 0);	/* n950tr: panic() */
++
+ 	/*
+ 	 * It's possible to come here directly from a panic-assertion and
+ 	 * not have preempt disabled. Some functions called from here want
 -- 
 2.56.0
 

@@ -30,17 +30,21 @@ Build: `./build-tracer.sh` (about 3 minutes on 4 cores). The tree must have
 Each stage writes to two places that can be read back after the device has
 reset (`arch/arm/include/asm/n950trace.h` in the patch has the details):
 
-1. **OneNAND, block 80 = mtd3 ("log") offset 0x40000.** Stage *n* programs
-   page *n* of that block: header `"N9TR"`, stage, aux0, aux1, then the
-   pattern `0xA500|n`. The chip is driven directly through its memory-mapped
-   registers at GPMC CS0 (0x04000000), the same PROG sequence
-   `onenand_base.c` uses, with bounded waits. Programming an erased page
-   needs no driver, no interrupts, no MMU and survives anything, including a
-   battery pull. mtdoops only reaches block 80 after four oopses.
-2. **RAM at 0x9F000000** (6 words: magic, bitmask of stages, last stage,
-   aux0, aux1, counter). Only useful if DDR keeps its contents through the
-   TWL5031 watchdog reset — unknown, cheap to try. The kernel reserves the
-   page and maps it uncached, so if the tracer kernel ever reaches user
+1. **OneNAND, block 80 = mtd3 ("log") offset 0x40000.** Stage *n* unlocks
+   the block and programs page *n* of it: header `"N9TR"` (reads as `RT9N`
+   in a hexdump), stage, aux0, aux1, then the pattern `0xA500|n`. The chip
+   is driven directly through its memory-mapped registers at GPMC CS0
+   (0x04000000), the same UNLOCK and PROG sequences `onenand_base.c` uses,
+   with bounded waits. Programming an erased page needs no driver, no
+   interrupts, no MMU and survives anything, including a battery pull.
+   mtdoops (this tree's `find_next_position` has no magic check) takes the
+   page-16 header for a record and continues in block 81, so it never
+   erases block 80.
+2. **RAM at 0x9F000000** (8 words: magic, bitmask of stages, last stage,
+   aux0, aux1, counter, OneNAND CTRL_STATUS after the last PROG, WP_STATUS
+   after the last UNLOCK). Only useful if DDR keeps its contents through
+   the TWL5031 watchdog reset — unknown, cheap to try. The kernel reserves
+   the page and maps it uncached, so if the tracer kernel ever reaches user
    space the record is also readable from there via `/dev/mem`.
 
 The decompressor also **checksums its own image** as its second act: all
@@ -107,9 +111,14 @@ configuration, 192.168.0.15 when ubiboot runs without one).
 ./n950tr-test.sh ~/n950/zImage_2.6.32.48-n950tr1 192.168.2.15
 ```
 
-erases mtd3 (`flash_erase /dev/mtd3 0 8`), sends the zImage into `/tmp`
-(RAM only — the 2.6.32 stack hangs on sustained network + eMMC traffic),
-loads it with ubiboot's own command line (`/proc/original_cmdline`, as
+first programs page 63 of block 80 by hand with `devmem`, the very
+sequence the tracer uses (this proves the chip address, the register
+offsets, the page addressing and the lock state from ubiboot's shell
+before any kernel is involved — expected: WP_STATUS 0x0004, CTRL_STATUS
+without bit 10, the page reads `52 54 39 4e 63 00 00 00`), then erases
+mtd3 (`flash_erase /dev/mtd3 0 8`), sends the zImage into `/tmp` (RAM only
+— the 2.6.32 stack hangs on sustained network + eMMC traffic), loads it
+with ubiboot's own command line (`/proc/original_cmdline`, as
 `select_os_animated.sh` does) and runs `kexec -e`. The screen goes black.
 Wait for the TWL5031 watchdog to reset the phone (about 30 s) or pull the
 battery, boot into maintenance mode again and run
@@ -118,7 +127,8 @@ battery, boot into maintenance mode again and run
 ./n950tr-read.sh 192.168.2.15
 ```
 
-which prints the pages found in block 80 and the RAM record. To put the
+which reads the RAM record first (ubiboot's kernel treats that page as
+free memory) and then the pages found in block 80, and decodes both. To put the
 tracer in the boot menu instead, copy it to partition 2 `/boot/` and add a
 `G_OS2_3_LABEL`/`G_OS2_3_FILE` line to `ubiboot.conf`.
 
@@ -128,6 +138,6 @@ the device attached); the device-side commands are the ones used by hand on
 
 ## Status
 
-- 2026-11-08: tracer built (`2.6.32.48-dfl61-n950tr`, zImage 2788044 bytes,
-  md5 `c68e63e0…`, checksum 0xa5bf4e5e), generated code checked with
+- 2026-11-08: tracer built (`2.6.32.48-dfl61-n950tr`, zImage 2788224 bytes,
+  md5 `bd88c86d…`, checksum 0x5bb9b242), generated code checked with
   objdump, not yet run on the phone.
