@@ -3,10 +3,12 @@
 # from ubiboot's maintenance shell, and read the Harmattan boot tracer back.
 #
 # This is the practical driver for the two findings in HANDOVER-boot-from-ubiboot.md:
-#   * Leste dies ~54 s after a kexec because ubiboot armed the OMAP watchdog and
-#     Leste's omap_wdt disables-at-probe instead of adopting it; booting with
-#     omap_wdt.early_enable=1 makes the driver adopt the running watchdog and the
-#     watchdog core feeds it (HANDLE_BOOT_ENABLED, OPEN_TIMEOUT=0) until dsme opens it.
+#   * Leste "did not boot" from ubiboot because p4 carried the modules of the old
+#     g79375 kernel while /boot/zImage was ga6675: display, USB and zram are
+#     modules, so the kernel ran to multi-user blind.  Installing the matching
+#     modules fixed it (2026-11-08).  omap_wdt.early_enable=1 stays in p4's cmdline;
+#     whether it is needed at all is untested (the 6.18 hwmod code resets and stops
+#     wd_timer2 at postcore_initcall anyway).
 #   * MeeGo (Harmattan 2.6.32) does NOT die early: the tracer showed it runs to the
 #     end of do_basic_setup and then hangs in prepare_namespace waiting for root,
 #     because the eMMC times out on its first access after the kexec.  The kernel
@@ -63,11 +65,11 @@ leste)
 	T "mkdir -p /mnt/4; mount -o ro /dev/mmcblk0p4 /mnt/4 && \
 	   kexec -l --type=zImage --command-line=\"\$(cat /mnt/4/boot/cmdline) $LESTE_CMDLINE_EXTRA\" /mnt/4/boot/zImage && \
 	   echo LOAD_OK && umount /mnt/4 2>/dev/null; /usr/bin/disable_pm 2>/dev/null; sync; echo 'firing kexec -e'; kexec -e" | CLEAN
-	echo "== watching USB for up to 150 s (Leste survives past ~54 s only if the watchdog fix works) =="
-	usb_watch 150
-	echo "If a Leste gadget stays up past ~60 s: the watchdog fix works. Make it permanent by"
-	echo "appending '$LESTE_CMDLINE_EXTRA' to G_OS3_INIT_CMDLINE_APPENDS in p1 /boot/ubiboot.conf,"
-	echo "or to /boot/Nemo/boot/cmdline on p4 (which ubiboot reads as the OS3 override)."
+	echo "== watching USB for up to 200 s: Leste's RNDIS gadget (1d6b:0104, 'Maemo Leste') shows up ~150 s after the kexec =="
+	usb_watch 200
+	echo "Leste answers at 192.168.42.2 (the base image's usb0; give the PC 192.168.42.1/24) or at its"
+	echo "IPv6 link-local address (ping -6 ff02::1%<iface>); ssh root with the key, known_hosts.n950-leste."
+	echo "No gadget at all = the modules on p4 do not match the kernel (see HANDOVER, 2026-11-08 update)."
 	;;
 
 erase-log)

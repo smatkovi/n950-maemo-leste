@@ -157,3 +157,61 @@ logo**; the module work is a follow-up.
 
 Build the MeeGo kernel: `cd harmattan-kexec && NAME=zImage_2.6.32.48-n950tr-mmc ./build-tracer.sh`
 (CodeSourcery 2009q3 from the Harmattan SDK; ~3 min on 4 cores).
+
+---
+
+## Update 2026-11-08 ~23:20 — Leste boots from ubiboot; the real cause was the modules
+
+The first test of the `leste` recipe ended in a black screen with no USB gadget and
+the phone would not wake. With the phone back in ubiboot maintenance the evidence
+was on p4 itself (`leste-evidence.sh` reads it): `/var/log/dmesg` and `syslog` of
+that very boot (the command line carries `omap_wdt.early_enable=1`) showed
+
+- the eMMC retry did fire: `mmc1: error -110 whilst initialising MMC card` →
+  `retrying the non-removable card (1)` → card found at 5.7 s;
+- `Run /sbin/init` at 6.6 s, rsyslog, udev, dbus, cron, oFono … up to ~2 min — far
+  past the 54 s at which it used to die;
+- **not one line from omapdrm, panel-dsi-cm, musb or the USB PHY**, and
+  `Error: inserting the zram kernel module`.
+
+The reason: p4's `/lib/modules` only held `6.18.51-g79375bbc75bf` (the Oct 29
+release kernel), while `/boot/zImage` had been switched to `ga6675e716fe6`. All
+display and USB drivers are modules (`=m`), so the kernel ran to multi-user blind.
+
+**Fix:** ubiboot maintenance exports the whole eMMC as a USB disk (`/dev/sda`,
+`sda4` = p4; check `md5sum` of the first MiB of `/dev/mmcblk0p4` on the phone
+against `/dev/sda4` on the PC before touching it). Mount `sda4` on the PC and copy
+`~/ps/n950-kernel/stage-6.18.51-ga6675e716fe6/lib/modules/6.18.51-ga6675e716fe6`
+into `/lib/modules/`, `chown -R root:root`, `sync`, unmount. Done on 2026-11-08.
+
+**Result:** kexec from the maintenance shell → the gadget `1d6b:0104 "Maemo Leste /
+Hildon RNDIS"` appears ~150 s after the kexec (the base image's usb0 wins over
+n950-usbnet: `UDC core: n950: couldn't find an available UDC`). Leste answers at
+**192.168.42.2** (give the PC 192.168.42.1/24) and on its IPv6 link-local address;
+`ssh root@…` with the key (`~/.ssh/known_hosts.n950-leste`). omapdrm, panel-dsi-cm,
+musb_hdrc, omap2430, phy-twl4030-usb loaded; `card1-DSI-1` connected and enabled;
+Xorg, hildon-desktop, mce, dsme running; 7 min uptime and counting. A black screen
+*now* is mce's display blanking (`bl_power=4`), the power button or
+`dbus-send … com.nokia.mce.request.req_display_state_on` turns it on.
+
+**On the watchdog story:** `omap_wdt.early_enable=1` stays in p4 `/boot/cmdline`
+(the file ubiboot uses verbatim for OS3), but whether it is needed is **untested**:
+reading the 6.18 tree, hwmod resets and stops `wd_timer2` at `postcore_initcall`
+(`omap2_wd_timer_reset` → `omap2_wd_timer_disable`) long before `omap_wdt` probes,
+and the earlier "~54 s reset" tests all ran without matching modules too. Try a boot
+without the token when convenient; if it still boots, drop it.
+
+Also seen in Leste's dmesg after a kexec from ubiboot: `PVR_K:(Error):
+BridgedDispatchKM: Initialisation failed. Driver unusable.` (SGX) — a GPU topic,
+not a boot blocker.
+
+**MeeGo (OS2 slot 3, `zImage_2.6.32.48-n950tr-mmc`) is still untested.** Given that
+Leste's log shows exactly the predicted eMMC timeout-and-retry after the kexec, the
+same fix in the 2.6.32 kernel is the right bet. The PR1.3 source for a
+module-compatible `2.6.32.54-dfl61-20121301` build is now at
+`~/ps/harmattan-src/kernel-pr13/src` (github nemomobile/kernel-adaptation-n950-n9,
+branch `mer-n9-2.6.32-20121301`, `rm581_defconfig`).
+
+| File | What |
+| --- | --- |
+| `leste-evidence.sh` | read-only: ubiboot.log, p4 superblock (note: ubiboot itself mounts p4 rw, so its mount time is useless), p4 `/var/log` |
