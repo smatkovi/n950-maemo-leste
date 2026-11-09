@@ -1,0 +1,42 @@
+From 756d0a705679f3412269aa707ae5e88498ec8506 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 15:44:36 +0100
+Subject: [PATCH] power: supply: bq2415x: re-assert the regulation voltage in
+ the timer work
+
+Set once at probe, VOREG falls back to the chip's 4.20 V power-on default when
+the safety timer expires (which it does whenever nothing is charging), so a
+3.8 V battery the BSI detected would charge to 4.20 V the next time a cable is
+plugged. Re-assert init_data's voltage on every timer tick - one i2c write, and
+it keeps the charger configured across the chip's own timeouts.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ drivers/power/supply/bq2415x_charger.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/power/supply/bq2415x_charger.c b/drivers/power/supply/bq2415x_charger.c
+index a02013bbe..1ba351c88 100644
+--- a/drivers/power/supply/bq2415x_charger.c
++++ b/drivers/power/supply/bq2415x_charger.c
+@@ -944,6 +944,17 @@ static void bq2415x_timer_work(struct work_struct *work)
+ 		return;
+ 	}
+ 
++	/*
++	 * Re-assert the battery regulation voltage: without a running charge the
++	 * chip's safety timer expires and resets VOREG to its 4.20 V power-on
++	 * default, which would undercharge a 3.8 V battery the BSI detected. Cheap
++	 * (one i2c write) and it also keeps the charger configured as init_data
++	 * says across the chip's own timeouts.
++	 */
++	if (bq->init_data.battery_regulation_voltage)
++		bq2415x_set_battery_regulation_voltage(bq,
++				bq->init_data.battery_regulation_voltage);
++
+ 	boost = bq2415x_exec_command(bq, BQ2415X_BOOST_MODE_STATUS);
+ 	if (boost < 0) {
+ 		bq2415x_timer_error(bq, "Unknown error");
+-- 
+2.56.0
+
