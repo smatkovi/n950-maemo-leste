@@ -22,6 +22,7 @@ and boot it.
 | `sgx/build-deb.sh` | the GPU's user space as `sgx-ddk-um-n950`: TI's DDK 1.17.4948957 for the AM335x (the same SGX530 revision 1.2.5) in place of the GPU libraries of Leste's `sgx-ddk-um-ti343x`, Leste's own `libdbm` kept (release `sgx-ddk-um-n950-1.17.4948957-n950.1`) |
 | `harmattan-kexec/` | why Harmattan 2.6.32 dies after a kexec: a boot tracer for the Harmattan kernel (OneNAND + RAM markers, image self-checksum), build and test scripts |
 | `apps/n950-fm/` | FM radio for Hildon (the Pro1X's `pro1x-fm` for the N950's receiver), `n950-fm-audio` for its sound, `n950-fm-test` for a shell; `apps/build-deb.sh` builds it as an armhf .deb in a chroot of a Leste image |
+| `mce/patches/` | patches on Leste's mce (`maemo-leste/mce`): the power key wakes and unlocks in one press, see [mce/README.md](mce/README.md) |
 
 ## Status
 
@@ -35,8 +36,12 @@ and boot it.
 | Keyboard | Nokia's own layouts (`nokia_vndr/rm-680` from Harmattan's xkeyboard-config, whose key codes match the device tree's keymap), compiled at session start in Leste's layout (`rootfs/overlay`); the slide switch active high (`0027`); the keyboard light through Leste's mce (`70-n950.ini`) |
 | FM radio (WL1273) | `radio-wl1273` back from v6.17 with device tree support, the N950's node: I2C3 0x22, interrupt GPIO 43, reset GPIO 179 (`0016` to `0019`); `/dev/radio0`. The sound: the chip's analog output into the TWL5031's AUXL/AUXR (Nokia's audio configuration 4), recorded by the TWL5031 and played through a PulseAudio loopback (`n950-fm-audio`), as Harmattan's audio policy does; the receiver's firmware patch comes from Harmattan at first boot |
 | GPU (SGX530 1.2.5) | `pvrsrvkm_omap3630_sgx530_125` with TI's ti335x user space (`sgx/`): GLES2 for hildon-desktop through Mesa's pvr driver, PVR2D for X (tested 2026-11-03) |
-| Wi-Fi (WL1271) | over SPI; wl12xx binds the device wlcore_spi creates (`0026`), the calibrated NVS from Harmattan where wlcore reads it (`n950-firmware`); no MAC address in that NVS yet |
-| Charger (bq24153a) | left out on purpose until it can be tested on the phone |
+| Wi-Fi (WL1271) | over SPI; wl12xx binds the device wlcore_spi creates (`0026`), the calibrated NVS from Harmattan where wlcore reads it (`n950-firmware`); that NVS has no MAC address, so `n950-wlan-mac` sets a stable, locally administered one derived from the eMMC's CID, and the interface is always wlan0, the only one icd2 manages (`10-n950-wlan.rules`, the persistent-net generator masked) |
+| Charger (bq24153a) | the TWL5031's charge control switch to the bq24153a (`0029` to `0031`), the charge voltage per battery and by BSI (`0034` to `0036`, `n950-battery`); charging still stops under load and sometimes needs the cable replugged |
+| CPU | 1 GHz and 1.1 GHz as turbo OPPs (`0032`, `0033`; 1.1 GHz is DPLL1's ceiling, a 1.2 GHz request runs at 1.1 GHz), kept on by `n950-boost`, throttled by the bandgap thermal zone |
+| Modem (CMT) | nokia-modem, ssi_protocol, cmt_speech and phonet load at boot; ofono's n900 plugin boots the modem through `/dev/cmt/<line>/value`, which `98-n950-cmt.rules` points at the GPIOs nokia-modem exports; `50-n950-net` restarts ofono and icd2 once the late devices exist. The modem answers (Nokia NoRM6, firmware V 92_11w51_3), but ofono still drops it shortly afterwards and sees no SIM, while the same SIM works under Harmattan |
+| Power key | Leste's mce only shows the lockscreen; with `mce/patches/0001` a press wakes and unlocks at once (`71-n950-powerkey.ini`); tested with injected key events, the physical button still to be confirmed |
+| Swap | 256 MB zram at boot (`40-n950-swap`), as Harmattan's `enable-swap.conf` does on phones with 1 GB; OneNAND's mtd4 as flash swap would need `CONFIG_MTD_SWAP` for wear levelling |
 
 GPS: the BCM4751's protocol is proprietary and has no free implementation.
 The `bcm4751-gps` driver offers Nokia's own interface (`/dev/bcm4751-gps`

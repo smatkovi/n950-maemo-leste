@@ -1,0 +1,5 @@
+# The N950's wl1271 has no MAC address in its NVS or fuses, so wlcore picks a
+# random one on every load. Give it a stable one and a stable name: icd2 only
+# manages wlan0, and with random addresses the persistent-net generator
+# handed out wlan1, wlan2, ... (its rule file grew one entry per boot).
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="wl12xx_driver", NAME:="wlan0", RUN+="/usr/local/sbin/n950-wlan-mac %k"

@@ -1,0 +1,16 @@
+#!/bin/sh
+# The Wi-Fi chip (wl1271 on SPI) and the CMT modem probe late, often after
+# icd2 and ofono have started and found nothing. Once the devices exist,
+# restart both, so that icd2 manages wlan0 and ofono boots the modem through
+# /dev/cmt. In the background, so the rest of the boot does not wait.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+(
+	for i in $(seq 1 60); do
+		[ -e /sys/class/net/wlan0 ] && [ -e /dev/cmt/cmt_en/value ] && break
+		sleep 1
+	done
+	sleep 2
+	[ -e /dev/cmt/cmt_en/value ] && rc-service ofono restart
+	[ -e /sys/class/net/wlan0 ] && rc-service icd2 restart
+) </dev/null >/dev/null 2>&1 &
+exit 0

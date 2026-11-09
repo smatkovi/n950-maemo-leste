@@ -1,0 +1,10 @@
+#!/bin/sh
+# Manual fallback for 98-n950-cmt.rules: point /dev/cmt at the GPIOs that the
+# nokia-modem driver exports, once they exist, so ofono can boot the modem.
+for d in /sys/bus/hsi/drivers/nokia-modem/*/; do
+	[ -e "${d}cmt_en/value" ] || continue
+	ln -sfn "$(readlink -f "$d")" /dev/cmt
+	exit 0
+done
+echo "n950-cmt-link: no nokia-modem device with exported GPIOs" >&2
+exit 1

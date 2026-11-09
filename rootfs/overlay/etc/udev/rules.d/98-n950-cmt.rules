@@ -1,0 +1,6 @@
+# ofono's n900 plugin (plugins/nokia-gpio.c) boots the CMT modem through
+# /dev/cmt/<line>/value (cmt_en, cmt_rst_rq, cmt_apeslpx). The mainline
+# nokia-modem driver exports those GPIOs under its own sysfs node instead, so
+# point /dev/cmt there; without it ofono logs "/dev/cmt: No such file" and
+# never registers the modem.
+SUBSYSTEM=="hsi", KERNEL=="n950-modem", ACTION=="add|bind", RUN+="/bin/ln -sfn /sys$env{DEVPATH} /dev/cmt"

@@ -1,0 +1,60 @@
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Subject: [PATCH] lock-tklock: the power key wakes and unlocks in one press
+
+On the Nokia N950 the visual tklock's swipe is unreliable, and a power-key
+press only shows the lockscreen, which mce blanks again after five seconds
+(DEFAULT_VISUAL_BLANK_DELAY) unless it is swiped away. With PowerKeyUnlocks
+(group [PowerKey], default on) the press takes the path of a
+req_tklock_mode_change "unlocked" request instead: set_tklock_state(LOCK_OFF)
+closes the lockscreen UI, clears the tklock submodes and resumes touch, and
+synthesise_activity() keeps the display on. PowerKeyUnlocks=false restores
+the lockscreen.
+
+The N950 runs the Maemo stack (10-maemo.ini loads lock-tklock, not
+lock-generic), so this is where the power key's tklock handling lives.
+
+Tested on the N950 with KEY_POWER events injected into twl4030_pwrbutton:
+display off and tklock locked before, display on and unlocked after, on
+every try. A press on the physical button is still to be confirmed.
+---
+--- a/src/modules/lock-tklock.c
++++ b/src/modules/lock-tklock.c
+@@ -157,6 +157,11 @@
+ static submode_t call_submode = MCE_INVALID_SUBMODE;
+ 
+ static uint16_t power_keycode;
++/* When set, a power-key press directly wakes and unlocks instead of only
++ * showing the visual tklock UI. The N950's lockscreen swipe is unreliable,
++ * so the power button unlocks in one press. Config: [PowerKey]
++ * PowerKeyUnlocks (default: on). */
++static gboolean powerkey_unlocks = TRUE;
+ 
+ /** TKLock UI state type */
+ typedef enum {
+@@ -1527,6 +1532,17 @@
+ 			disable_eveater(TRUE);
+ 			synthesise_activity();
+ 		}
++		else if (powerkey_unlocks && is_tklock_enabled()) {
++			/* Power key wakes and unlocks in one press. This is
++			 * the same path as a req_tklock_mode_change "unlocked"
++			 * request: it closes the lockscreen UI, clears the
++			 * tklock submodes and resumes touch, which is reliable
++			 * even when the lockscreen swipe is not. */
++			mce_log(LL_DEBUG, "power key - direct unlock");
++			set_tklock_state(LOCK_OFF);
++			synthesise_activity();
++			update_saved_submode();
++		}
+ 		else
+ 			trigger_visual_tklock();
+ 	}
+@@ -2083,6 +2099,8 @@
+ 
+ 	power_keycode = mce_conf_get_int(MCE_CONF_POWERKEY_GROUP, MCE_CONF_POWERKEY_KEYCODE, KEY_POWER, NULL);
+ 
++	powerkey_unlocks = mce_conf_get_bool(MCE_CONF_POWERKEY_GROUP, "PowerKeyUnlocks", TRUE, NULL);
++
+ 	blank_immediately = mce_conf_get_bool(MCE_CONF_TKLOCK_GROUP,
+ 					      MCE_CONF_BLANK_IMMEDIATELY,
+ 					      DEFAULT_BLANK_IMMEDIATELY,
