@@ -30,17 +30,19 @@
 #   ./boot-from-ubiboot.sh deploy-pr13 [zImage]  # copy the module-compatible kernel to p2/boot, ubiboot OS2 slot 4
 #   ./boot-from-ubiboot.sh meego-pr13 [zImage]   # kexec that kernel from p2 (NOLO cmdline), watch USB for MeeGo
 #
-# Second argument overrides the device IP (default 192.168.2.15).
+# Device IP: DEV=... in the environment, or a bare IP as second argument (default
+# 192.168.2.15; ubiboot without its config answers at 192.168.0.15).
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-DEV=${2:-192.168.2.15}
+DEV=${DEV:-192.168.2.15}
+case "${2:-}" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) DEV=$2;; esac
 T() { python3 "$HERE/ubiboot-telnet.py" "$1" "$DEV"; }
 CLEAN() { sed 's/\x1b\[[0-9;]*m//g' | grep -vE '^/ # |__ENDOFCMD__'; }
 
 MEEGO_KERNEL=${MEEGO_KERNEL:-$HOME/n950/zImage_2.6.32.48-n950tr-mmc}
 PR13_KERNEL=${PR13_KERNEL:-$HOME/n950/zImage_2.6.32.54-dfl61-20121301-mmcfix}
-PR13_LABEL="MeeGo PR1.3 + mmc fix"
-PR13_SLOT=4
+PR13_LABEL=${PR13_LABEL:-"MeeGo PR1.3 + mmc fix"}   # env overrides: PR13_SLOT=5 PR13_LABEL="..." for a second kernel
+PR13_SLOT=${PR13_SLOT:-4}
 LESTE_CMDLINE_EXTRA="omap_wdt.early_enable=1"
 
 usb_watch() {   # $1 = seconds; prints the N950 USB state, "LESTE" if a non-ubiboot gadget appears
@@ -114,7 +116,7 @@ meego)
 	;;
 
 deploy-pr13)
-	K=${2:-$PR13_KERNEL}; B=$(basename "$K")
+	K=$PR13_KERNEL; [ -f "${2:-}" ] && K=$2; B=$(basename "$K")
 	[ -f "$K" ] || { echo "no $K - build it: ./build-pr13.sh"; exit 1; }
 	echo "== copy $B to p2/boot and make it ubiboot OS2 slot $PR13_SLOT (\"$PR13_LABEL\") =="
 	T 'rm -f /tmp/zI; (setsid nc -l -p 9999 > /tmp/zI </dev/null 2>/dev/null &); echo NC_UP' | CLEAN
@@ -129,7 +131,7 @@ deploy-pr13)
 	;;
 
 meego-pr13)
-	K=${2:-$PR13_KERNEL}; B=$(basename "$K")
+	K=$PR13_KERNEL; [ -f "${2:-}" ] && K=$2; B=$(basename "$K")
 	echo "== kexec /boot/$B from p2 with NOLO's cmdline (/proc/original_cmdline, incl. bootreason=) =="
 	T 'echo "bootreason now: $(tr " " "\n" < /proc/original_cmdline | grep ^bootreason)"' | CLEAN
 	echo "   (pwr_key = Harmattan boots to USER; after a USB-started NOLO it would say usb)"

@@ -308,5 +308,44 @@ helper had downloaded; the owner has to allow it or run it.
 **Side effect to know:** after Harmattan's software reset the eMMC stays in a state ubiboot's
 stock 2.6.32 mmc core cannot initialise (`mmc0: error -110 whilst initialising MMC card`), so
 ubiboot comes up **without its config** (defaults: IP 192.168.0.15, DHCP offers
-192.168.0.100, no partition export, nothing bootable). A cold start (power off, power key)
-clears it. Ubiboot's own kernel would want patch 0003 too.
+192.168.0.100, no partition export, nothing bootable; on the screen it says "boot menu
+script not found"). A cold start (power off, power key) clears it. Ubiboot's own kernel would want patch 0003 too.
+
+## Update 2026-11-09 ~08:25 — MeeGo boots from ubiboot with the kernel built from Nokia's PR1.3 source
+
+**Confirmation of the Aegis diagnosis:** after the cold start, p2 `/var/lib/upstart/
+jobs_unrecoverable` (written during the slot-4 test boot) reads `dbus: 1`. Harmattan's
+`dbus.conf` has `respawn limit 0 0` + `reboot` and runs under `aegis-session`; without the
+Aegis LSM the job cannot start, Upstart marks it unrecoverable and reboots → the sw_rst.
+
+**Built from Nokia's tree** (`prep-nokia-tree.sh`: git baseline of
+`kernel_2.6.32-20121301+0m8`, branch `n950-mmcfix` = perl host fix + 0003 + 0004, then
+`build-pr13.sh`): `zImage_2.6.32.54-dfl61-20121301-mmcfix-nokia`, 2781156 bytes, md5
+cebaaeea; 100 modules; `crc-compare.py` again 91/91, `module_layout` match. Deployed with
+`PR13_SLOT=5 PR13_LABEL="MeeGo PR1.3 Nokia src + mmc fix" ./boot-from-ubiboot.sh deploy-pr13
+~/n950/zImage_2.6.32.54-dfl61-20121301-mmcfix-nokia` → p2 `/boot`, ubiboot OS2 slot 5.
+
+**Test** (`meego-pr13 <that file>`, from the maintenance shell of a power-key session,
+`bootreason=pwr_key`): ubiboot gadget gone 08:21:44, **`0421:03d1 "Nokia N950"` at
+08:22:02 (+18 s) and still there at +3 min** — no sw_rst this time, the stock `g_nokia`
+loaded by Harmattan's own userland. WLAN did not answer at 192.168.1.6 in the first
+minutes, so the kernel identity on the running system (`uname -r`, `lsmod`, the dmesg
+retry line) is still to be read once the owner confirms the UI and the WLAN is up.
+
+So the chain is complete: ubiboot → kexec → 2.6.32.54 with the eMMC retry → root
+mounted → stock modules → Harmattan userland. What is left is cosmetic/operational:
+* ubiboot `G_DEFAULT_KERNEL` still points at the stock openmode kernel (which hangs at the
+  root mount); switching the default to slot 5 is the owner's call (`ubiboot.conf` on p1).
+* The slot-4 kernel (Nemo tree, no Aegis) can be deleted from p2 `/boot`; keep slot 3
+  (tracer) only if more tracing is wanted.
+* ubiboot's own 2.6.32 kernel has the same eMMC weakness after Harmattan's software reset
+  (`mmc0: error -110`, config not found, "boot menu script not found"): a cold start
+  fixes it; patching ubiboot's kernel with 0003 would fix it for good.
+
+| File | What |
+| --- | --- |
+| `build-pr13.sh` | builds 2.6.32.54-dfl61-20121301 (zImage + staged modules) from a given tree |
+| `prep-nokia-tree.sh` | git baseline + patches for Nokia's pristine PR1.3 source, then build-pr13.sh |
+| `crc-compare.py` | stock modules' expected CRCs vs the build's Module.symvers |
+| `patches/0004..0008` | decompressor cache fix; IOMMU tristate, unaligned-access flag, sec_hal `.arch_extension` (Nemo tree only); perl host fix |
+| `boot-from-ubiboot.sh deploy-pr13 / meego-pr13` | copy a kernel to p2/boot + ubiboot slot (env PR13_SLOT/PR13_LABEL), kexec it and watch USB |
