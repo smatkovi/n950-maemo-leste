@@ -1,0 +1,92 @@
+From 927f783f7a0d2055af73b307ad7575dd7f7dbbf9 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Sat, 7 Nov 2026 02:12:30 +0100
+Subject: [PATCH 28/31] ARM: omap3-n950: detect OneNAND in async mode, allow
+ flashing the kernel
+
+On v6.x the inherited sync/burst GPMC timings fail to identify the
+OneNAND chip ("OneNAND Manufacturer: Unknown (0xa0)"), so no MTD device
+registers and the NOLO/config/kernel partitions are unreachable.
+
+Drop the sync/burst/sync-clk-ps properties for the N950 so onenand_scan()
+identifies the chip in async mode (its power-on default), and disable the
+post-scan sync optimisation in onenand_omap2.c so the chip keeps running
+async instead of aborting the probe. Async is slower but correct, which
+is all that is needed to read/write the kernel partition.
+
+Also leave partition@2 (kernel) writable so an alternative boot loader
+(ubiboot) can be flashed into it; bootloader and config stay read-only.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 24 ++++++++++++++++++------
+ drivers/mtd/nand/onenand/onenand_omap2.c |  9 ++++++++-
+ 2 files changed, 26 insertions(+), 7 deletions(-)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index e80de6629..39a47e80c 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -384,21 +384,33 @@ fuel-gauge@55 {
+ };
+ 
+ /*
+- * Nothing on the OneNAND belongs to this system: the boot loader (NOLO),
+- * the calibration data (config), the kernel partition and Harmattan's
+- * own stay read-only
++ * OneNAND belongs to Harmattan: the boot loader (NOLO) and the calibration
++ * data (config) stay read-only so they can never be touched. The kernel
++ * partition is left writable on purpose, so an alternative boot loader
++ * (ubiboot) can be flashed into it from Leste.
++ *
++ * The inherited sync/burst GPMC timings fail to detect the chip on v6.x
++ * ("OneNAND Manufacturer: Unknown (0xa0)"). Drop them so onenand_scan()
++ * identifies the chip in async mode (its power-on default); the driver's
++ * post-scan sync optimisation is disabled for this reason in
++ * drivers/mtd/nand/onenand/onenand_omap2.c, so it keeps running async.
+  */
+ &gpmc {
+ 	onenand@0,0 {
++		/delete-property/ gpmc,sync-read;
++		/delete-property/ gpmc,sync-write;
++		/delete-property/ gpmc,burst-read;
++		/delete-property/ gpmc,burst-write;
++		/delete-property/ gpmc,burst-wrap;
++		/delete-property/ gpmc,burst-length;
++		/delete-property/ gpmc,sync-clk-ps;
++
+ 		partition@0 {
+ 			read-only;
+ 		};
+ 		partition@1 {
+ 			read-only;
+ 		};
+-		partition@2 {
+-			read-only;
+-		};
+ 		partition@3 {
+ 			read-only;
+ 		};
+diff --git a/drivers/mtd/nand/onenand/onenand_omap2.c b/drivers/mtd/nand/onenand/onenand_omap2.c
+index 0793251ad..db50769b0 100644
+--- a/drivers/mtd/nand/onenand/onenand_omap2.c
++++ b/drivers/mtd/nand/onenand/onenand_omap2.c
+@@ -525,7 +525,14 @@ static int omap2_onenand_probe(struct platform_device *pdev)
+ 		goto err_release_dma;
+ 
+ 	freq = omap2_onenand_get_freq(c->onenand.version_id);
+-	if (freq > 0) {
++	/*
++	 * N950/N9: the sync-timing optimisation regressed on v6.x and leaves
++	 * the chip undetectable or mismatched with the GPMC. The chip is
++	 * detected and driven in async mode (slower, but correct), so skip
++	 * switching to sync here. Keep the computation guarded to avoid
++	 * unused-variable warnings.
++	 */
++	if (0 && freq > 0) {
+ 		switch (freq) {
+ 		case 104:
+ 			latency = 7;
+-- 
+2.56.0
+

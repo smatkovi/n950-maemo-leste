@@ -1,0 +1,411 @@
+From b0109c0176765379affcaa603c30532d728e8fd1 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 10:50:11 +0100
+Subject: [PATCH 30/31] power: supply: twl5031_bcc: VBUS switch to the external
+ charger on the Nokia N950/N9
+
+The TWL5031 has no charger of its own; the battery is charged by a
+bq24153a that only sees VBUS when the TWL5031's battery charge control
+block closes its switch (SW_USBCHRG_EN), after the chip's USB charger
+detection. Harmattan does this from user space (bme), so without it the
+battery drains on a connected cable under any other OS.
+
+Port of Nokia's drivers/power/twl5031-bcc.c (2.6.32): on the USB PHY's
+VBUS notifier run the detection state machine, close the switch, and
+publish a USB power supply with CURRENT_MAX (500 mA) for bq2415x's
+ti,usb-charger-detection; open the switch again when VBUS goes away. The
+ULPI based DCP/CDP classification and the data contact detection are not
+ported (they need the transceiver, which musb owns), so every source is
+treated as a 500 mA port.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ drivers/power/supply/Kconfig       |  10 +
+ drivers/power/supply/Makefile      |   1 +
+ drivers/power/supply/twl5031_bcc.c | 341 +++++++++++++++++++++++++++++
+ 3 files changed, 352 insertions(+)
+ create mode 100644 drivers/power/supply/twl5031_bcc.c
+
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index dca4be23e..48cd2c3e1 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -518,6 +518,16 @@ config CHARGER_MAX8903
+ 	  pins based on the status of charger connections with interrupt
+ 	  handlers.
+ 
++config CHARGER_TWL5031_BCC
++	tristate "TWL5031 battery charge control (Nokia N950/N9)"
++	depends on TWL4030_CORE && USB_PHY
++	depends on OF
++	help
++	  Say Y to close the TWL5031's switch between VBUS and the external
++	  battery charger IC when a USB cable is plugged in, as on the Nokia
++	  N950 and N9 (bq24153a). The result is a USB power supply the
++	  bq2415x driver can follow through ti,usb-charger-detection.
++
+ config CHARGER_TWL4030
+ 	tristate "OMAP TWL4030 BCI charger driver"
+ 	depends on IIO && TWL4030_CORE
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index 99a820d38..2bfe72b60 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -72,6 +72,7 @@ obj-$(CONFIG_CHARGER_CPCAP)	+= cpcap-charger.o
+ obj-$(CONFIG_CHARGER_ISP1704)	+= isp1704_charger.o
+ obj-$(CONFIG_CHARGER_MAX8903)	+= max8903_charger.o
+ obj-$(CONFIG_CHARGER_TWL4030)	+= twl4030_charger.o
++obj-$(CONFIG_CHARGER_TWL5031_BCC)	+= twl5031_bcc.o
+ obj-$(CONFIG_CHARGER_TWL6030)	+= twl6030_charger.o
+ obj-$(CONFIG_CHARGER_LP8727)	+= lp8727_charger.o
+ obj-$(CONFIG_CHARGER_LP8788)	+= lp8788-charger.o
+diff --git a/drivers/power/supply/twl5031_bcc.c b/drivers/power/supply/twl5031_bcc.c
+new file mode 100644
+index 000000000..7001b5b97
+--- /dev/null
++++ b/drivers/power/supply/twl5031_bcc.c
+@@ -0,0 +1,341 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * twl5031_bcc.c - TWL5031 battery charge control: the switch between VBUS
++ * and the external charger on the Nokia N950 and N9
++ *
++ * The TWL5031 does not charge the battery itself (its BCI is gone); a
++ * bq24153a does. Between VBUS and that charger sits a switch in the
++ * TWL5031's battery charge control (BCC) block, closed by SW_USBCHRG_EN
++ * after the chip's USB charger detection has run. Without it the charger
++ * never sees VBUS and reports "ready" (no input) while the battery drains
++ * on a connected cable. Harmattan does all this in user space (bme); this
++ * driver does it in the kernel, after Nokia's drivers/power/twl5031-bcc.c
++ * for Linux 2.6.32 (Aliaksei Katovich, Nokia Corporation, GPL v2).
++ *
++ * The result is published as a USB power supply with CURRENT_MAX, so the
++ * bq2415x driver can follow it through ti,usb-charger-detection the same
++ * way the N900 follows its isp1704. VBUS presence comes from the USB PHY's
++ * notifier (the musb omap2430 glue signals USB_EVENT_VBUS/USB_EVENT_NONE).
++ *
++ * Not ported: the ULPI based dedicated-charger (DCP/CDP) classification
++ * and the data contact detection. Both need the transceiver in a state
++ * musb owns, and the data contact detection cannot succeed while musb
++ * pulls D+ up. So every supply is treated as a 500 mA USB port; a wall
++ * charger charges at 500 mA, which keeps a wrong sense-resistor guess for
++ * the bq24153a harmless (its charge current is bounded by the input).
++ */
++
++#include <linux/delay.h>
++#include <linux/jiffies.h>
++#include <linux/mfd/twl.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/notifier.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/regulator/consumer.h>
++#include <linux/usb/phy.h>
++#include <linux/workqueue.h>
++
++/* registers, relative to TWL5031_MODULE_BCC (0xAA on slave 2) */
++#define BCC_CTRL2			0x01
++#define  BCC_CHGMODE_SW			BIT(0)	/* software controls the charge path */
++#define  BCC_SW_USBCHRG_EN		BIT(1)	/* VBUS -> external charger */
++#define  BCC_SW_VACCHRG_EN		BIT(2)
++#define  BCC_SW_CHRG_DET		BIT(3)	/* detection found a 500 mA source */
++#define  BCC_SW_USB_DET_EN		BIT(4)	/* run the USB detection state machine */
++#define BCC_STS				0x02
++#define  BCC_USB_DET_STS_MASK		(BIT(0) | BIT(1))
++#define  BCC_USB_DET_STS_100MA		1
++#define  BCC_USB_DET_STS_500MA		2
++#define  BCC_USB_P_STS			BIT(2)	/* VBUS present */
++#define  BCC_VAC_P_STS			BIT(3)
++#define  BCC_BATTERY_PRESENCE_STS	BIT(4)
++#define  BCC_STS_RESET			0xaa	/* no VBUS, block in reset */
++#define BCC_USB_CHRG_CTRL1		0x03
++#define BCC_USB_CHRG_CTRL2		0x04
++
++#define BCC_DETECT_TIMEOUT_MS		300
++#define BCC_USB_CURRENT_MA		500	/* what we offer the charger driver */
++
++struct twl5031_bcc {
++	struct device		*dev;
++	struct mutex		lock;
++	struct work_struct	work;
++	struct usb_phy		*phy;
++	struct notifier_block	nb;
++	struct regulator	*usb3v1;
++	struct power_supply	*usb;
++	unsigned long		event;
++	bool			online;
++	int			current_ma;
++	int			detected;	/* BCC_USB_DET_STS_* or 0 */
++};
++
++static int bcc_read(struct twl5031_bcc *bcc, u8 reg)
++{
++	u8 val;
++	int ret = twl_i2c_read_u8(TWL5031_MODULE_BCC, &val, reg);
++
++	if (ret < 0) {
++		dev_err(bcc->dev, "read of BCC register %#x failed: %d\n", reg, ret);
++		return ret;
++	}
++	return val;
++}
++
++static int bcc_write(struct twl5031_bcc *bcc, u8 reg, u8 val)
++{
++	int ret = twl_i2c_write_u8(TWL5031_MODULE_BCC, val, reg);
++
++	if (ret < 0)
++		dev_err(bcc->dev, "write of BCC register %#x failed: %d\n", reg, ret);
++	return ret;
++}
++
++/*
++ * Run the TWL5031's USB charger detection and close the VBUS switch to the
++ * external charger (Nokia's twl5031_bcc_psy_fsm_detect()). Returns the
++ * detection result (BCC_USB_DET_STS_*), 0 if nothing was detected but the
++ * switch was closed anyway because the PHY reports VBUS, or an error.
++ */
++static int twl5031_bcc_connect(struct twl5031_bcc *bcc)
++{
++	unsigned long timeout;
++	int ctl, sts, det = 0, ret;
++
++	/* the detection's current sources run from this regulator */
++	if (bcc->usb3v1) {
++		ret = regulator_enable(bcc->usb3v1);
++		if (ret)
++			dev_warn(bcc->dev, "cannot enable usb3v1: %d\n", ret);
++	}
++
++	ctl = bcc_read(bcc, BCC_CTRL2);
++	if (ctl < 0)
++		return ctl;
++	ctl &= ~(BCC_SW_USBCHRG_EN | BCC_SW_CHRG_DET);
++	ctl |= BCC_CHGMODE_SW | BCC_SW_USB_DET_EN;
++	ret = bcc_write(bcc, BCC_CTRL2, ctl);
++	if (ret < 0)
++		return ret;
++
++	timeout = jiffies + msecs_to_jiffies(BCC_DETECT_TIMEOUT_MS);
++	do {
++		usleep_range(5000, 10000);
++		sts = bcc_read(bcc, BCC_STS);
++		if (sts < 0 || sts == BCC_STS_RESET)
++			continue;
++		if (!(sts & BCC_BATTERY_PRESENCE_STS) || !(sts & BCC_USB_P_STS))
++			continue;
++		det = sts & BCC_USB_DET_STS_MASK;
++		if (det == BCC_USB_DET_STS_500MA)
++			break;
++	} while (time_before(jiffies, timeout));
++
++	ctl |= BCC_SW_USBCHRG_EN;
++	if (det == BCC_USB_DET_STS_500MA)
++		ctl |= BCC_SW_CHRG_DET;
++	ctl &= ~BCC_SW_USB_DET_EN;	/* keep the result, stop the state machine */
++	ret = bcc_write(bcc, BCC_CTRL2, ctl);
++
++	if (bcc->usb3v1 && regulator_is_enabled(bcc->usb3v1))
++		regulator_disable(bcc->usb3v1);
++
++	return ret < 0 ? ret : det;
++}
++
++static int twl5031_bcc_disconnect(struct twl5031_bcc *bcc)
++{
++	int ctl = bcc_read(bcc, BCC_CTRL2);
++
++	if (ctl < 0)
++		return ctl;
++	ctl &= ~(BCC_SW_USBCHRG_EN | BCC_SW_CHRG_DET | BCC_SW_USB_DET_EN);
++	return bcc_write(bcc, BCC_CTRL2, ctl);
++}
++
++static void twl5031_bcc_work(struct work_struct *work)
++{
++	struct twl5031_bcc *bcc = container_of(work, struct twl5031_bcc, work);
++	bool online;
++	int ret;
++
++	mutex_lock(&bcc->lock);
++	switch (bcc->event) {
++	case USB_EVENT_VBUS:
++	case USB_EVENT_ENUMERATED:
++		online = true;
++		if (!bcc->online) {
++			ret = twl5031_bcc_connect(bcc);
++			if (ret < 0) {
++				dev_err(bcc->dev, "cannot connect the charger: %d\n", ret);
++				online = false;
++			} else {
++				bcc->detected = ret;
++				dev_info(bcc->dev, "VBUS: detection %s, charger connected (CTRL2 %#x, STS %#x)\n",
++					 ret == BCC_USB_DET_STS_500MA ? "500 mA" :
++					 ret == BCC_USB_DET_STS_100MA ? "100 mA" : "none",
++					 bcc_read(bcc, BCC_CTRL2), bcc_read(bcc, BCC_STS));
++			}
++		}
++		break;
++	case USB_EVENT_ID:	/* we are the host: nothing to charge from */
++	case USB_EVENT_NONE:
++	default:
++		online = false;
++		if (bcc->online) {
++			twl5031_bcc_disconnect(bcc);
++			dev_info(bcc->dev, "no VBUS, charger disconnected\n");
++		}
++		break;
++	}
++	if (online != bcc->online) {
++		bcc->online = online;
++		bcc->current_ma = online ? BCC_USB_CURRENT_MA : 0;
++		mutex_unlock(&bcc->lock);
++		power_supply_changed(bcc->usb);
++		return;
++	}
++	mutex_unlock(&bcc->lock);
++}
++
++static int twl5031_bcc_notifier(struct notifier_block *nb, unsigned long event,
++				void *data)
++{
++	struct twl5031_bcc *bcc = container_of(nb, struct twl5031_bcc, nb);
++
++	bcc->event = event;
++	schedule_work(&bcc->work);
++	return NOTIFY_OK;
++}
++
++static enum power_supply_property twl5031_bcc_props[] = {
++	POWER_SUPPLY_PROP_ONLINE,
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_CURRENT_MAX,
++};
++
++static int twl5031_bcc_get_property(struct power_supply *psy,
++				    enum power_supply_property psp,
++				    union power_supply_propval *val)
++{
++	struct twl5031_bcc *bcc = power_supply_get_drvdata(psy);
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_ONLINE:
++	case POWER_SUPPLY_PROP_PRESENT:
++		val->intval = bcc->online;
++		break;
++	case POWER_SUPPLY_PROP_CURRENT_MAX:
++		val->intval = bcc->current_ma * 1000;	/* uA */
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static const struct power_supply_desc twl5031_bcc_desc = {
++	.name		= "twl5031-bcc-usb",
++	.type		= POWER_SUPPLY_TYPE_USB,
++	.properties	= twl5031_bcc_props,
++	.num_properties	= ARRAY_SIZE(twl5031_bcc_props),
++	.get_property	= twl5031_bcc_get_property,
++};
++
++static ssize_t registers_show(struct device *dev, struct device_attribute *attr,
++			      char *buf)
++{
++	struct twl5031_bcc *bcc = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "CTRL2 %#04x STS %#04x USB_CHRG_CTRL1 %#04x USB_CHRG_CTRL2 %#04x\n",
++			  bcc_read(bcc, BCC_CTRL2), bcc_read(bcc, BCC_STS),
++			  bcc_read(bcc, BCC_USB_CHRG_CTRL1),
++			  bcc_read(bcc, BCC_USB_CHRG_CTRL2));
++}
++static DEVICE_ATTR_RO(registers);
++
++static int twl5031_bcc_probe(struct platform_device *pdev)
++{
++	struct power_supply_config cfg = {};
++	struct twl5031_bcc *bcc;
++	int ret;
++
++	bcc = devm_kzalloc(&pdev->dev, sizeof(*bcc), GFP_KERNEL);
++	if (!bcc)
++		return -ENOMEM;
++	bcc->dev = &pdev->dev;
++	mutex_init(&bcc->lock);
++	INIT_WORK(&bcc->work, twl5031_bcc_work);
++	platform_set_drvdata(pdev, bcc);
++
++	bcc->phy = devm_usb_get_phy_by_phandle(&pdev->dev, "usb-phy", 0);
++	if (IS_ERR(bcc->phy))
++		return dev_err_probe(&pdev->dev, PTR_ERR(bcc->phy), "no USB PHY\n");
++
++	bcc->usb3v1 = devm_regulator_get_optional(&pdev->dev, "usb3v1");
++	if (IS_ERR(bcc->usb3v1)) {
++		if (PTR_ERR(bcc->usb3v1) == -EPROBE_DEFER)
++			return -EPROBE_DEFER;
++		bcc->usb3v1 = NULL;
++	}
++
++	cfg.drv_data = bcc;
++	cfg.of_node = pdev->dev.of_node;
++	bcc->usb = devm_power_supply_register(&pdev->dev, &twl5031_bcc_desc, &cfg);
++	if (IS_ERR(bcc->usb))
++		return dev_err_probe(&pdev->dev, PTR_ERR(bcc->usb),
++				     "cannot register the power supply\n");
++
++	ret = device_create_file(&pdev->dev, &dev_attr_registers);
++	if (ret)
++		dev_warn(&pdev->dev, "no registers attribute: %d\n", ret);
++
++	bcc->nb.notifier_call = twl5031_bcc_notifier;
++	ret = usb_register_notifier(bcc->phy, &bcc->nb);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "cannot register the USB notifier\n");
++
++	/* a cable may already be in */
++	bcc->event = bcc->phy->last_event;
++	schedule_work(&bcc->work);
++
++	dev_info(&pdev->dev, "TWL5031 battery charge control (CTRL2 %#x, STS %#x)\n",
++		 bcc_read(bcc, BCC_CTRL2), bcc_read(bcc, BCC_STS));
++	return 0;
++}
++
++static void twl5031_bcc_remove(struct platform_device *pdev)
++{
++	struct twl5031_bcc *bcc = platform_get_drvdata(pdev);
++
++	usb_unregister_notifier(bcc->phy, &bcc->nb);
++	cancel_work_sync(&bcc->work);
++	device_remove_file(&pdev->dev, &dev_attr_registers);
++	mutex_lock(&bcc->lock);
++	twl5031_bcc_disconnect(bcc);
++	mutex_unlock(&bcc->lock);
++}
++
++static const struct of_device_id twl5031_bcc_of_match[] = {
++	{ .compatible = "nokia,twl5031-bcc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, twl5031_bcc_of_match);
++
++static struct platform_driver twl5031_bcc_driver = {
++	.probe		= twl5031_bcc_probe,
++	.remove		= twl5031_bcc_remove,
++	.driver		= {
++		.name		= "twl5031_bcc",
++		.of_match_table	= twl5031_bcc_of_match,
++	},
++};
++module_platform_driver(twl5031_bcc_driver);
++
++MODULE_DESCRIPTION("TWL5031 battery charge control (VBUS switch to the external charger)");
++MODULE_AUTHOR("Nokia Corporation");
++MODULE_AUTHOR("Sebastian Matkovich <sebastian.matkovich@gmail.com>");
++MODULE_LICENSE("GPL");
+-- 
+2.56.0
+
