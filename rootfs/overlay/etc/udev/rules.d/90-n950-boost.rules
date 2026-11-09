@@ -1,0 +1,2 @@
+# turbo OPP follows USB power (usr/local/sbin/n950-boost)
+SUBSYSTEM=="power_supply", RUN+="/usr/local/sbin/n950-boost"

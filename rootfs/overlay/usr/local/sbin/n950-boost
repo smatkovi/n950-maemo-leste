@@ -1,0 +1,15 @@
+#!/bin/sh
+# N950: the 1 GHz turbo OPP (cpufreq boost) on USB power, 800 MHz on battery.
+# /etc/n950-boost may hold "on", "off" or "auto" (default) to override.
+B=/sys/devices/system/cpu/cpufreq/boost
+[ -w "$B" ] || exit 0
+mode=$(cat /etc/n950-boost 2>/dev/null || echo auto)
+case "$mode" in
+on)  want=1 ;;
+off) want=0 ;;
+*)   want=0
+     for p in /sys/class/power_supply/*; do
+         [ "$(cat $p/type 2>/dev/null)" = "USB" ] && [ "$(cat $p/online 2>/dev/null)" = "1" ] && want=1
+     done ;;
+esac
+[ "$(cat $B)" = "$want" ] || echo "$want" > "$B"
