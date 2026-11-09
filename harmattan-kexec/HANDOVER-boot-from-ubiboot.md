@@ -349,3 +349,9 @@ mounted → stock modules → Harmattan userland. What is left is cosmetic/opera
 | `crc-compare.py` | stock modules' expected CRCs vs the build's Module.symvers |
 | `patches/0004..0008` | decompressor cache fix; IOMMU tristate, unaligned-access flag, sec_hal `.arch_extension` (Nemo tree only); perl host fix |
 | `boot-from-ubiboot.sh deploy-pr13 / meego-pr13` | copy a kernel to p2/boot + ubiboot slot (env PR13_SLOT/PR13_LABEL), kexec it and watch USB |
+
+**08:28 — owner confirms: MeeGo booted to the UI** with the slot-5 kernel ("hat gebootet").
+Still open on the ubiboot side: `G_DEFAULT_KERNEL` points at the stock openmode kernel,
+and `G_OS2_NUM` on p1 was never read back (the local copy says 1, which would hide slots
+2–5 in the menu); the menu path for slot 5 is therefore untested. Both are one conf edit
+in maintenance mode, pending the owner's OK. The owner then booted Leste from the menu.

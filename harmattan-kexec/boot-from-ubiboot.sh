@@ -99,14 +99,15 @@ meego)
 	echo "pc md5:     $(md5sum < "$MEEGO_KERNEL" | cut -c1-32)"
 	T "echo \"device md5: \$(md5sum < /tmp/zI | cut -c1-32)\"; mount /dev/mmcblk0p2 /mnt/2 && cp /tmp/zI /mnt/2/boot/$(basename "$MEEGO_KERNEL") && sync && umount /mnt/2 && echo COPIED" | CLEAN
 	echo "== kexec it with the Harmattan cmdline (root=/dev/mmcblk0p2) =="
+	T0=$(date +%s)   # kexec -e never returns, so the telnet helper waits out its 40 s deadline; offsets below are from here
 	T 'kexec -l --type=zImage --command-line="$(cat /proc/original_cmdline)" /tmp/zI && echo LOAD_OK; /usr/bin/disable_pm 2>/dev/null; sync; echo "firing kexec -e"; kexec -e' | CLEAN
 	echo "== 2026-11-09: this kernel reaches stage 25. The screen shows the Nokia logo and then the"
 	echo "   R&D screen (kernel version, build date, bootreason) drawn by Harmattan's preinit from the"
 	echo "   eMMC root. It stays there: the .48 kernel cannot load the stock .54 modules (PVR, g_nokia,"
 	echo "   wl12xx ...), so no UI, no USB gadget. Restart with the power key, USB plugged in, to get"
 	echo "   back into ubiboot maintenance, then run:  $0 meego-read"
-	echo "== watching USB for up to 240 s (NOLO 0421:0106/0105 = device reset; 0525:a4ab = ubiboot back) =="
-	T0=$(date +%s); last=""
+	echo "== watching USB for up to 240 s (NOLO 0421:0106/0105 = device reset; 0525:a4ab = ubiboot back); offsets from the kexec call =="
+	last=""
 	for i in $(seq 1 240); do
 		cur=$(lsusb | grep -oE '(0421|0525):[0-9a-f]{4}' | sort -u | tr '\n' ' ')
 		[ "$cur" != "$last" ] && { echo "[+$(( $(date +%s)-T0 )) s] usb: ${cur:-none}"; last=$cur; }
@@ -135,12 +136,13 @@ meego-pr13)
 	echo "== kexec /boot/$B from p2 with NOLO's cmdline (/proc/original_cmdline, incl. bootreason=) =="
 	T 'echo "bootreason now: $(tr " " "\n" < /proc/original_cmdline | grep ^bootreason)"' | CLEAN
 	echo "   (pwr_key = Harmattan boots to USER; after a USB-started NOLO it would say usb)"
+	T0=$(date +%s)   # offsets of the USB watch are from here (the helper waits out its 40 s deadline after kexec -e)
 	T "mkdir -p /mnt/2; mount -o ro /dev/mmcblk0p2 /mnt/2 && ls -l /mnt/2/boot/$B && \
 	   kexec -l --type=zImage --command-line=\"\$(cat /proc/original_cmdline)\" /mnt/2/boot/$B && echo LOAD_OK && \
 	   umount /mnt/2; sync; /usr/bin/disable_pm 2>/dev/null; echo 'firing kexec -e'; kexec -e" | CLEAN
 	echo "== watching USB for up to 240 s: Nokia gadget 0421:xxxx (not 0105/0106) = MeeGo userland up with g_nokia;"
-	echo "   0421:0106/0105 = NOLO after a reset; 0525:a4ab = ubiboot back =="
-	T0=$(date +%s); last=""
+	echo "   0421:0106/0105 = NOLO after a reset; 0525:a4ab = ubiboot back; offsets from the kexec call =="
+	last=""
 	for i in $(seq 1 240); do
 		cur=$(lsusb | grep -oE '(0421|0525):[0-9a-f]{4}' | sort -u | tr '\n' ' ')
 		[ "$cur" != "$last" ] && { echo "[+$(( $(date +%s)-T0 )) s] usb: ${cur:-none}"; last=$cur; }
