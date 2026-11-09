@@ -1,0 +1,21 @@
+#!/bin/sh
+# Tell the kernel which battery is inserted, for the charge-to voltage.
+# Edits /boot/cmdline (read by ubiboot at the next boot); a battery swap is a
+# power cycle, so the change takes effect exactly then.
+#   n950-battery          - show the current setting
+#   n950-battery bl-4d    - 4.20 V (default, safe for both)
+#   n950-battery bv-4d    - 4.34 V (the BV-4D's full capacity; NEVER with a BL-4D)
+F=/boot/cmdline
+TOK="bq2415x_charger.override_voreg_mv=4340"
+case "$1" in
+bv-4d)
+	grep -q "$TOK" $F || sed -i "s|\$| $TOK|" $F
+	echo "next boot charges to 4.34 V (BV-4D). Do not boot this with a BL-4D inserted." ;;
+bl-4d)
+	sed -i "s| *bq2415x_charger\.override_voreg_mv=[0-9]*||" $F
+	echo "next boot charges to 4.20 V (BL-4D / safe default)" ;;
+*)
+	if grep -q "override_voreg_mv=4340" $F; then echo "configured: BV-4D (4.34 V)"; else echo "configured: BL-4D (4.20 V default)"; fi
+	B=/sys/class/power_supply/bq24153a-0/battery_regulation_voltage
+	[ -r "$B" ] && echo "running kernel charges to: $(cat $B) mV" ;;
+esac

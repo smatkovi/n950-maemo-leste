@@ -1,0 +1,58 @@
+From 105d2a9483f368c2a9d44e10ab967c8075531fb5 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 15:06:38 +0100
+Subject: [PATCH] power: supply: bq2415x: command-line override for the battery
+ regulation voltage
+
+The charge-to voltage belongs to the inserted battery, not the board: the
+Nokia N950 takes the BL-4D (4.20 V) and the BV-4D (4.35 V), and neither the
+BSI pin (both read ~0.99 V) nor the firmware (NOLO always passes
+battery-type=BL-4D) tells them apart, so it cannot be a device-tree constant
+alone and runtime sysfs writes do not survive the driver's fault recovery.
+override_voreg_mv on the command line replaces the init value at probe; a
+battery swap is a power cycle, so it is read at exactly the right moment.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ drivers/power/supply/bq2415x_charger.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/drivers/power/supply/bq2415x_charger.c b/drivers/power/supply/bq2415x_charger.c
+index b50a28b9d..4e41432c8 100644
+--- a/drivers/power/supply/bq2415x_charger.c
++++ b/drivers/power/supply/bq2415x_charger.c
+@@ -180,6 +180,18 @@ static DEFINE_IDR(bq2415x_id);
+ 
+ static DEFINE_MUTEX(bq2415x_id_mutex);
+ static DEFINE_MUTEX(bq2415x_timer_mutex);
++
++/*
++ * The battery regulation (charge-to) voltage is a property of the inserted
++ * battery, not of the board: the Nokia N950 takes both the BL-4D (4.20 V)
++ * and the BV-4D (4.35 V), and neither the BSI pin nor the firmware tells
++ * them apart. Let the command line say what is inserted; a battery swap
++ * means a power cycle anyway, so the parameter is read at the right moment.
++ */
++static int override_voreg_mv;
++module_param(override_voreg_mv, int, 0444);
++MODULE_PARM_DESC(override_voreg_mv,
++	"override the battery regulation voltage in mV (0 = keep the firmware value)");
+ static DEFINE_MUTEX(bq2415x_i2c_mutex);
+ 
+ /**** i2c read functions ****/
+@@ -1642,6 +1654,12 @@ static int bq2415x_probe(struct i2c_client *client)
+ 		memcpy(&bq->init_data, pdata, sizeof(bq->init_data));
+ 	}
+ 
++	if (override_voreg_mv) {
++		dev_info(bq->dev, "battery regulation voltage overridden: %d mV\n",
++			 override_voreg_mv);
++		bq->init_data.battery_regulation_voltage = override_voreg_mv;
++	}
++
+ 	bq2415x_reset_chip(bq);
+ 
+ 	ret = bq2415x_power_supply_init(bq);
+-- 
+2.56.0
+
