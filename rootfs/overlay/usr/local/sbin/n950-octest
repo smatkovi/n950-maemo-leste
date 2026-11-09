@@ -9,10 +9,16 @@
 F=${1:?kHz}; M=${2:-10}; L=/var/log/n950-octest.log
 C=/sys/devices/system/cpu/cpu0/cpufreq
 cap=$(cat /etc/n950-maxfreq 2>/dev/null || echo 1000000); gov=$(cat $C/scaling_governor)
-restore() { echo "$gov" > $C/scaling_governor; echo 300000 > $C/scaling_min_freq; echo "$cap" > $C/scaling_max_freq; echo "$(date +%T) restored governor=$gov max=$cap" >> $L; }
+restore() { echo powersave > $C/scaling_governor; echo 300000 > $C/scaling_min_freq; echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null; echo "$cap" > $C/scaling_max_freq; echo "$gov" > $C/scaling_governor; echo "$(date +%T) restored governor=$gov max=$cap boost=off" >> $L; }
 trap restore EXIT INT TERM
+# order matters on the overclock kernel: pin with the performance governor at the
+# current ceiling first, THEN enable boost, THEN raise the ceiling to F. That makes
+# one controlled jump to exactly F; enabling boost under ondemand lets the governor
+# roam into an unstable overclock OPP and reset the device.
+echo performance > $C/scaling_governor
+echo 300000 > $C/scaling_min_freq
 echo 1 > /sys/devices/system/cpu/cpufreq/boost
-echo "$F" > $C/scaling_max_freq && echo "$F" > $C/scaling_min_freq && echo performance > $C/scaling_governor
+echo "$F" > $C/scaling_max_freq && echo "$F" > $C/scaling_min_freq
 sleep 1; echo "$(date +%T) START $F kHz for $M min, cur=$(cat $C/scaling_cur_freq) temp=$(cat /sys/class/thermal/thermal_zone0/temp)" >> $L
 python3 - "$M" "$L" <<'PY' &
 import hashlib, os, sys, time
