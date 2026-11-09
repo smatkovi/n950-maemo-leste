@@ -13,3 +13,9 @@ off) want=0 ;;
      done ;;
 esac
 [ "$(cat $B)" = "$want" ] || echo "$want" > "$B"
+# cap for the overclock OPPs (1.1/1.2/1.3 GHz): the highest step that passed
+# its stability test (n950-octest), default 1 GHz
+cap=$(cat /etc/n950-maxfreq 2>/dev/null || echo 1000000)
+for c in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+	[ "$(cat $c)" = "$cap" ] || echo "$cap" > "$c" 2>/dev/null
+done

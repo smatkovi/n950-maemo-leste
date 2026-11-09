@@ -1,0 +1,31 @@
+#!/bin/sh
+# Stability test of one CPU frequency step on the N950.
+#   n950-octest <kHz> [minutes]      e.g. n950-octest 1100000 10
+# Pins the CPU to that frequency (performance governor, max = min = step), runs
+# a compute-and-verify load (sha256 of a fixed buffer must always match) plus an
+# integer loop, logs temperature and errors every 10 s to /var/log/n950-octest.log,
+# then restores the governor and the cap from /etc/n950-maxfreq.
+# A reset or hang during the test = the step is not stable.
+F=${1:?kHz}; M=${2:-10}; L=/var/log/n950-octest.log
+C=/sys/devices/system/cpu/cpu0/cpufreq
+cap=$(cat /etc/n950-maxfreq 2>/dev/null || echo 1000000); gov=$(cat $C/scaling_governor)
+restore() { echo "$gov" > $C/scaling_governor; echo 300000 > $C/scaling_min_freq; echo "$cap" > $C/scaling_max_freq; echo "$(date +%T) restored governor=$gov max=$cap" >> $L; }
+trap restore EXIT INT TERM
+echo 1 > /sys/devices/system/cpu/cpufreq/boost
+echo "$F" > $C/scaling_max_freq && echo "$F" > $C/scaling_min_freq && echo performance > $C/scaling_governor
+sleep 1; echo "$(date +%T) START $F kHz for $M min, cur=$(cat $C/scaling_cur_freq) temp=$(cat /sys/class/thermal/thermal_zone0/temp)" >> $L
+python3 - "$M" "$L" <<'PY' &
+import hashlib, os, sys, time
+mins=float(sys.argv[1]); log=open(sys.argv[2],"a",buffering=1)
+buf=os.urandom(1<<20); ref=hashlib.sha256(buf).hexdigest()
+end=time.time()+mins*60; n=0; bad=0; x=0
+while time.time()<end:
+    if hashlib.sha256(buf).hexdigest()!=ref: bad+=1
+    for i in range(20000): x=(x*1103515245+12345)&0xffffffff
+    n+=1
+log.write("%s compute: %d rounds, %d MISMATCHES\n" % (time.strftime("%H:%M:%S"), n, bad))
+PY
+W=$!
+while kill -0 $W 2>/dev/null; do sleep 10; echo "$(date +%T) cur=$(cat $C/scaling_cur_freq) temp=$(cat /sys/class/thermal/thermal_zone0/temp) load=$(cut -d" " -f1 /proc/loadavg) oops=$(dmesg | grep -ciE 'oops|BUG:|undefined instruction|segfault')" >> $L; done
+wait $W; echo "$(date +%T) END $F kHz" >> $L
+tail -3 $L
