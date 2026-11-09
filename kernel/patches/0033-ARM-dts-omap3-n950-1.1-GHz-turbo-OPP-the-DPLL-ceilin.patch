@@ -1,0 +1,45 @@
+From 74b4d122586b7b1cd8a92983d82d2d6fc4de0197 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 16:49:14 +0100
+Subject: [PATCH] ARM: dts: omap3-n950: 1.1 GHz turbo OPP (the DPLL ceiling,
+ tested stable)
+
+The owner wanted the highest stable overclock. The MPU DPLL cannot produce more
+than 1.1 GHz on this device (a 1.2 GHz request clocks at 1.1 GHz, confirmed via
+scaling_cur_freq and dpll1 clk_rate), and 1.1 GHz is stable at OPP1G's 1.375 V
+with its forward body bias. A turbo OPP; user space caps the daily maximum.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index ad28e5f20..d2bd271b0 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -170,6 +170,21 @@ &cpu0_opp_table {
+ 	opp-1000000000 {
+ 		opp-supported-hw = <0xffffffff 3>;
+ 	};
++
++	/*
++	 * Overclock, at the owner's request (2026-11-09): 1.1 GHz at OPP1G's
++	 * voltage (1.375 V) and its forward body bias, tested stable. The MPU
++	 * DPLL cannot clock above 1.1 GHz (a 1.2 GHz request runs at 1.1 GHz,
++	 * verified), so that is this device's ceiling. Turbo OPP; the daily
++	 * ceiling is set by user space (/etc/n950-maxfreq).
++	 */
++	opp-1100000000 {
++		opp-hz = /bits/ 64 <1100000000>;
++		opp-microvolt = <1375000 1375000 1375000>,
++				 <1375000 1375000 1375000>;
++		opp-supported-hw = <0xffffffff 3>;
++		turbo-mode;
++	};
+ };
+ 
+ &twl {
+-- 
+2.56.0
+
