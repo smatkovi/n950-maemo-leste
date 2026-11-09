@@ -1,4 +1,4 @@
-From 5350f56f13e42c2c5454203cdf2f1d7d36e00810 Mon Sep 17 00:00:00 2001
+From a56e4a1def1864275b92096eb41a3b8e96bc2cb0 Mon Sep 17 00:00:00 2001
 From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
 Date: Mon, 9 Nov 2026 10:50:11 +0100
 Subject: [PATCH 30/31] power: supply: twl5031_bcc: VBUS switch to the external
@@ -22,8 +22,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  drivers/power/supply/Kconfig       |  10 +
  drivers/power/supply/Makefile      |   1 +
- drivers/power/supply/twl5031_bcc.c | 341 +++++++++++++++++++++++++++++
- 3 files changed, 352 insertions(+)
+ drivers/power/supply/twl5031_bcc.c | 409 +++++++++++++++++++++++++++++
+ 3 files changed, 420 insertions(+)
  create mode 100644 drivers/power/supply/twl5031_bcc.c
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
@@ -61,10 +61,10 @@ index 99a820d38..2bfe72b60 100644
  obj-$(CONFIG_CHARGER_LP8788)	+= lp8788-charger.o
 diff --git a/drivers/power/supply/twl5031_bcc.c b/drivers/power/supply/twl5031_bcc.c
 new file mode 100644
-index 000000000..c3c6a5820
+index 000000000..653df94b4
 --- /dev/null
 +++ b/drivers/power/supply/twl5031_bcc.c
-@@ -0,0 +1,341 @@
+@@ -0,0 +1,409 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * twl5031_bcc.c - TWL5031 battery charge control: the switch between VBUS
@@ -121,10 +121,29 @@ index 000000000..c3c6a5820
 +#define  BCC_BATTERY_PRESENCE_STS	BIT(4)
 +#define  BCC_STS_RESET			0xaa	/* no VBUS, block in reset */
 +#define BCC_USB_CHRG_CTRL1		0x03
++#define  BCC_USB_SW_CTRL_EN		BIT(0)	/* software owns the USB current sources */
 +#define BCC_USB_CHRG_CTRL2		0x04
++#define  BCC_USB_100			BIT(0)
++#define  BCC_USB_500			BIT(1)
 +
 +#define BCC_DETECT_TIMEOUT_MS		300
 +#define BCC_USB_CURRENT_MA		500	/* what we offer the charger driver */
++#define BCC_REARM_MS			8000	/* switch open time to give the charger a VBUS edge */
++
++/*
++ * Knobs for finding out what keeps the path alive (2026-11-09: with the
++ * detection's 100 mA result the path dropped VBUS 30-600 s into charging,
++ * after load spikes - an input current limit of the TWL5031, presumably).
++ */
++static bool force_chrg_det = true;
++module_param(force_chrg_det, bool, 0644);
++MODULE_PARM_DESC(force_chrg_det, "set SW_CHRG_DET (charger found) whatever the detection said");
++static bool force_usb500;
++module_param(force_usb500, bool, 0644);
++MODULE_PARM_DESC(force_usb500, "take over the USB current sources (SW_CTRL_EN) and select USB_500 before closing the switch");
++static unsigned int rearm_ms = BCC_REARM_MS;
++module_param(rearm_ms, uint, 0644);
++MODULE_PARM_DESC(rearm_ms, "how long to open an already closed switch before detecting again");
 +
 +struct twl5031_bcc {
 +	struct device		*dev;
@@ -182,6 +201,20 @@ index 000000000..c3c6a5820
 +	ctl = bcc_read(bcc, BCC_CTRL2);
 +	if (ctl < 0)
 +		return ctl;
++	if (ctl & BCC_SW_USBCHRG_EN) {
++		/*
++		 * The switch is already closed, left so by whoever ran before
++		 * us (the PMIC keeps its registers across a kexec), and the
++		 * charger IC behind it does not take a new session without a
++		 * VBUS edge: it stayed in "ready" until the cable was pulled.
++		 * Open the switch long enough for its VBUS to decay.
++		 */
++		ret = bcc_write(bcc, BCC_CTRL2, ctl & ~(BCC_SW_USBCHRG_EN | BCC_SW_CHRG_DET));
++		if (ret < 0)
++			return ret;
++		if (rearm_ms)
++			msleep(rearm_ms);
++	}
 +	ctl &= ~(BCC_SW_USBCHRG_EN | BCC_SW_CHRG_DET);
 +	ctl |= BCC_CHGMODE_SW | BCC_SW_USB_DET_EN;
 +	ret = bcc_write(bcc, BCC_CTRL2, ctl);
@@ -201,8 +234,15 @@ index 000000000..c3c6a5820
 +			break;
 +	} while (time_before(jiffies, timeout));
 +
++	if (force_usb500) {
++		int c1 = bcc_read(bcc, BCC_USB_CHRG_CTRL1);
++
++		if (c1 >= 0)
++			bcc_write(bcc, BCC_USB_CHRG_CTRL1, c1 | BCC_USB_SW_CTRL_EN);
++		bcc_write(bcc, BCC_USB_CHRG_CTRL2, BCC_USB_500);
++	}
 +	ctl |= BCC_SW_USBCHRG_EN;
-+	if (det == BCC_USB_DET_STS_500MA)
++	if (det == BCC_USB_DET_STS_500MA || force_chrg_det)
 +		ctl |= BCC_SW_CHRG_DET;
 +	ctl &= ~BCC_SW_USB_DET_EN;	/* keep the result, stop the state machine */
 +	ret = bcc_write(bcc, BCC_CTRL2, ctl);
@@ -296,7 +336,8 @@ index 000000000..c3c6a5820
 +		val->intval = bcc->online;
 +		break;
 +	case POWER_SUPPLY_PROP_CURRENT_MAX:
-+		val->intval = bcc->current_ma * 1000;	/* uA */
++		/* in mA, not uA: bq2415x reads this the way isp1704 reports it */
++		val->intval = bcc->current_ma;
 +		break;
 +	default:
 +		return -EINVAL;
@@ -323,6 +364,30 @@ index 000000000..c3c6a5820
 +			  bcc_read(bcc, BCC_USB_CHRG_CTRL2));
 +}
 +static DEVICE_ATTR_RO(registers);
++
++static ssize_t reconnect_store(struct device *dev, struct device_attribute *attr,
++			       const char *buf, size_t count)
++{
++	struct twl5031_bcc *bcc = dev_get_drvdata(dev);
++	int ret;
++
++	mutex_lock(&bcc->lock);
++	twl5031_bcc_disconnect(bcc);
++	bcc->online = false;
++	ret = twl5031_bcc_connect(bcc);
++	if (ret >= 0) {
++		bcc->detected = ret;
++		bcc->online = true;
++		bcc->current_ma = BCC_USB_CURRENT_MA;
++	}
++	mutex_unlock(&bcc->lock);
++	power_supply_changed(bcc->usb);
++	dev_info(dev, "reconnect: %d (CTRL2 %#x, STS %#x, USB_CTRL1 %#x, USB_CTRL2 %#x)\n", ret,
++		 bcc_read(bcc, BCC_CTRL2), bcc_read(bcc, BCC_STS),
++		 bcc_read(bcc, BCC_USB_CHRG_CTRL1), bcc_read(bcc, BCC_USB_CHRG_CTRL2));
++	return ret < 0 ? ret : count;
++}
++static DEVICE_ATTR_WO(reconnect);
 +
 +static int twl5031_bcc_probe(struct platform_device *pdev)
 +{
@@ -357,8 +422,10 @@ index 000000000..c3c6a5820
 +				     "cannot register the power supply\n");
 +
 +	ret = device_create_file(&pdev->dev, &dev_attr_registers);
++	if (!ret)
++		ret = device_create_file(&pdev->dev, &dev_attr_reconnect);
 +	if (ret)
-+		dev_warn(&pdev->dev, "no registers attribute: %d\n", ret);
++		dev_warn(&pdev->dev, "no sysfs attributes: %d\n", ret);
 +
 +	bcc->nb.notifier_call = twl5031_bcc_notifier;
 +	ret = usb_register_notifier(bcc->phy, &bcc->nb);
@@ -380,6 +447,7 @@ index 000000000..c3c6a5820
 +
 +	usb_unregister_notifier(bcc->phy, &bcc->nb);
 +	cancel_work_sync(&bcc->work);
++	device_remove_file(&pdev->dev, &dev_attr_reconnect);
 +	device_remove_file(&pdev->dev, &dev_attr_registers);
 +	mutex_lock(&bcc->lock);
 +	twl5031_bcc_disconnect(bcc);
