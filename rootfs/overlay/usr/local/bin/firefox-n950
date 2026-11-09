@@ -1,0 +1,55 @@
+#!/bin/sh
+# Firefox ESR on the N950 (Maemo Leste): one process, touch input, full screen
+# with auto-hiding toolbars. Run as the session user.
+export MOZ_USE_XINPUT2=1            # touch events through XInput 2 (scroll/pinch, no mouse emulation)
+export MOZ_FORCE_DISABLE_E10S=1     # one process: no content processes on 1 GB RAM / one core
+export MOZ_DISABLE_RDD_SANDBOX=1
+export MOZ_WEBRENDER=0
+P="$HOME/.mozilla/firefox"
+# first start: seed the default profile's prefs
+if [ ! -d "$P" ] || ! ls "$P"/*.default* >/dev/null 2>&1; then
+	/usr/lib/firefox-esr/firefox-esr -CreateProfile default >/dev/null 2>&1
+fi
+for d in "$P"/*.default*; do
+	[ -d "$d" ] || continue
+	cat > "$d/user.js" <<'JS'
+// N950: small screen, one core, touch
+user_pref("browser.tabs.remote.autostart", false);
+user_pref("fission.autostart", false);
+user_pref("dom.ipc.processCount", 1);
+user_pref("gfx.webrender.all", false);
+user_pref("layers.acceleration.disabled", true);
+user_pref("browser.fullscreen.autohide", true);
+user_pref("browser.uidensity", 1);
+user_pref("browser.toolbars.bookmarks.visibility", "never");
+user_pref("browser.tabs.inTitlebar", 0);
+user_pref("dom.w3c_touch_events.enabled", 1);
+user_pref("apz.allow_zooming", true);
+user_pref("apz.allow_double_tap_zooming", true);
+user_pref("ui.touch.radius.enabled", true);
+user_pref("general.smoothScroll", false);
+user_pref("browser.sessionstore.interval", 300000);
+user_pref("browser.cache.disk.capacity", 65536);
+user_pref("media.autoplay.default", 5);
+user_pref("extensions.pocket.enabled", false);
+user_pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
+user_pref("browser.newtabpage.activity-stream.showSponsoredTopSites", false);
+user_pref("datareporting.healthreport.uploadEnabled", false);
+user_pref("toolkit.telemetry.enabled", false);
+user_pref("app.update.auto", false);
+user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
+JS
+	mkdir -p "$d/chrome"
+	cat > "$d/chrome/userChrome.css" <<'CSS'
+/* N950: give the page the screen - no tab strip, slim toolbar */
+#TabsToolbar { visibility: collapse !important; }
+#nav-bar { min-height: 28px !important; max-height: 28px !important; }
+#urlbar { min-height: 24px !important; font-size: 13px !important; }
+#PersonalToolbar { visibility: collapse !important; }
+CSS
+done
+/usr/lib/firefox-esr/firefox-esr "$@" &
+pid=$!
+# full screen once the window is up (toolbars then auto-hide; swipe to the top edge brings them back)
+( for i in $(seq 1 90); do sleep 2; if wmctrl -l 2>/dev/null | grep -qi "mozilla firefox"; then sleep 2; wmctrl -r "Mozilla Firefox" -b add,fullscreen 2>/dev/null; break; fi; kill -0 $pid 2>/dev/null || break; done ) &
+wait $pid

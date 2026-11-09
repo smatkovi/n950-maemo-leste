@@ -1,0 +1,6 @@
+#!/bin/sh
+# one-shot time sync once a default route exists, then save the RTC offset
+( for i in $(seq 1 90); do ip route | grep -q "^default" && break; sleep 10; done
+  if ip route | grep -q "^default"; then
+    if ntpdate -u pool.ntp.org >/dev/null 2>&1 || busybox ntpd -n -q -p pool.ntp.org >/dev/null 2>&1; then /usr/local/sbin/rtc-offset save; fi
+  fi ) >/dev/null 2>&1 &

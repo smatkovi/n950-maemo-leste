@@ -1,0 +1,20 @@
+#!/bin/sh
+# N950 under Leste: the TWL5031 RTC cannot be set (DRM msecure, only Harmattan's
+# secure side may), but it runs. Keep the difference real time minus RTC in a
+# file and apply it at boot; swclock stays the fallback after a battery swap.
+#   rtc-offset save    - store now - rtc   (after NTP, at shutdown)
+#   rtc-offset apply   - set the system clock from rtc + stored offset (at boot)
+F=/var/lib/rtc-offset/offset
+rtc=$(cat /sys/class/rtc/rtc0/since_epoch 2>/dev/null) || exit 0
+case "$1" in
+save)
+	[ "$(date +%s)" -gt 1700000000 ] || exit 0          # never save a bogus clock
+	mkdir -p "${F%/*}"; echo $(( $(date +%s) - rtc )) > "$F"; echo "rtc-offset: saved $(cat "$F")" ;;
+apply)
+	[ -s "$F" ] || exit 0
+	off=$(cat "$F"); now=$(( rtc + off ))
+	# the RTC restarts at 2000-01-01 after a battery swap: then rtc+offset is far in the past
+	[ "$now" -gt 1700000000 ] || { echo "rtc-offset: rtc looks reset (battery swap?), leaving the clock to swclock"; exit 0; }
+	[ "$now" -ge $(( $(date +%s) - 86400 )) ] || { echo "rtc-offset: would move the clock back, not applying"; exit 0; }
+	date -u -s "@$now" >/dev/null && echo "rtc-offset: clock set from RTC+offset: $(date)" ;;
+esac

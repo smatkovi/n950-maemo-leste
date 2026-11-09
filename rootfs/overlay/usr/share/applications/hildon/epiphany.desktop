@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Web
+Comment=Browse the web (GNOME Web / WebKitGTK)
+Exec=/usr/local/bin/epiphany-n950 %U
+Icon=org.gnome.Epiphany
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+X-Osso-Type=application/x-executable

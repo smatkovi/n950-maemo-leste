@@ -1,0 +1,12 @@
+#!/bin/sh
+# GNOME Web on the N950: GTK4 on the cairo renderer (the PVR GLES2 path is
+# untested with GTK4), no DMA-BUF renderer in WebKit. The web process sandbox
+# needs user namespaces (CONFIG_USER_NS, kernel patches >= 2026-11-09); the
+# owner runs without it, as MeeGo did, so the line below stays.
+export GDK_BACKEND=x11
+export GSK_RENDERER=cairo
+export GDK_SCALE=1
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+exec epiphany "$@"

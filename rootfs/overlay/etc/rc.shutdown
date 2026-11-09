@@ -1,0 +1,6 @@
+#!/bin/sh
+# local shutdown hooks (run by /etc/init.d/rc.local stop)
+if test -d /etc/shutdown.d ; then
+	run-parts /etc/shutdown.d
+fi
+/usr/local/sbin/rtc-offset save

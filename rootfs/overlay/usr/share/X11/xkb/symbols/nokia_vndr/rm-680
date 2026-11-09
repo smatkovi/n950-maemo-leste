@@ -1094,6 +1094,10 @@ xkb_symbols "modifiers" {
     key <RCTL>	{ type[Group1] = "ONE_LEVEL", symbols[Group1] = [	Control_R	] };
     modifier_map Control { Control_R };
 
+    // Fn (<LWIN>, ISO_Level3_Shift) needs a real modifier behind the
+    // LevelThree virtual modifier, or level 3 (-, +, digits ...) never engages.
+    modifier_map Mod5 { ISO_Level3_Shift };
+
     // Fn key switches to third level. When Fn is down, Shift switches
     // between third and fourth levels.
     include "level3(lwin_switch)"

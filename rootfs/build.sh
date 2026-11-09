@@ -171,6 +171,10 @@ in_target "apt-get -q -y -o Dpkg::Options::=--force-confold install hildon-meta-
 # which excalibur does not have, and its pictures (osso-graphics-game-
 # mahjong) are Nokia's.
 in_target "apt-get -q -y install openmediaplayer"
+# A browser for today's web that the N950 can carry: GNOME Web on the
+# WebKitGTK that is already there for Hildon. Firefox ESR stays as the fallback
+# (launchers in rootfs/overlay/usr/local/bin: one process, touch, full screen).
+in_target "apt-get -q -y --no-install-recommends install epiphany-browser"
 GH=https://github.com/smatkovi
 for deb in osso-chess-ui/releases/download/v1.8.3-2%2Bleste1/osso-chess-ui_1.8.3-2+leste1_armhf.deb \
 	osso-lmarbles/releases/download/v1.6.38-2%2Bleste1/osso-lmarbles_1.6.38-2+leste1_armhf.deb; do
@@ -212,6 +216,12 @@ sudo -n install -D -m 755 "$REPO/gps/harmattan-gps" "$DST/usr/sbin/harmattan-gps
 sudo -n install -D -m 755 "$REPO/gps/harmattan-gps.initd" "$DST/etc/init.d/harmattan-gps"
 sudo -n install -D -m 644 "$REPO/gps/harmattan-gps.conf" "$DST/etc/dbus-1/system.d/harmattan-gps.conf"
 in_target "rc-update add n950-firmware boot && rc-update add n950-usbnet default"
+# Measured 2026-11-09: maemo-xinput-sounds leaves every input sound's pipewire
+# stream running (8+ "running" streams, wireplumber/pipewire 6-11 % CPU for
+# good), exim4 has no job on the phone, and the TWL5031 RTC cannot be set by
+# Linux (rtc-offset, /etc/boot.d). Europe/Vienna is the owner's zone.
+in_target "mv /etc/X11/Xsession.post/01maemo-xinput-sounds-start /etc/X11/Xsession.post/01maemo-xinput-sounds-start.disabled 2>/dev/null; rc-update del exim4 default 2>/dev/null; true"
+in_target "ln -sf /usr/share/zoneinfo/Europe/Vienna /etc/localtime && echo Europe/Vienna > /etc/timezone"
 in_target "depmod $KREL"
 in_target "rm /usr/bin/udevadm && dpkg-divert --quiet --local --rename --remove /usr/bin/udevadm &&
 	rm -f /usr/sbin/policy-rc.d"
