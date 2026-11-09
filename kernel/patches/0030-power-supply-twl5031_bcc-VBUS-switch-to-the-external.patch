@@ -1,4 +1,4 @@
-From b0109c0176765379affcaa603c30532d728e8fd1 Mon Sep 17 00:00:00 2001
+From 5350f56f13e42c2c5454203cdf2f1d7d36e00810 Mon Sep 17 00:00:00 2001
 From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
 Date: Mon, 9 Nov 2026 10:50:11 +0100
 Subject: [PATCH 30/31] power: supply: twl5031_bcc: VBUS switch to the external
@@ -61,7 +61,7 @@ index 99a820d38..2bfe72b60 100644
  obj-$(CONFIG_CHARGER_LP8788)	+= lp8788-charger.o
 diff --git a/drivers/power/supply/twl5031_bcc.c b/drivers/power/supply/twl5031_bcc.c
 new file mode 100644
-index 000000000..7001b5b97
+index 000000000..c3c6a5820
 --- /dev/null
 +++ b/drivers/power/supply/twl5031_bcc.c
 @@ -0,0 +1,341 @@
@@ -350,7 +350,7 @@ index 000000000..7001b5b97
 +	}
 +
 +	cfg.drv_data = bcc;
-+	cfg.of_node = pdev->dev.of_node;
++	cfg.fwnode = dev_fwnode(&pdev->dev);
 +	bcc->usb = devm_power_supply_register(&pdev->dev, &twl5031_bcc_desc, &cfg);
 +	if (IS_ERR(bcc->usb))
 +		return dev_err_probe(&pdev->dev, PTR_ERR(bcc->usb),
