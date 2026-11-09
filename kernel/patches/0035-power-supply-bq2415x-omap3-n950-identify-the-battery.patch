@@ -1,0 +1,118 @@
+From e5bfe52485d55006faa56208f7b9fdd92078eba2 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 15:28:12 +0100
+Subject: [PATCH] power: supply: bq2415x + omap3-n950: identify the battery by
+ its BSI, pick the charge voltage
+
+The N950 takes a 3.7 V battery (BL-4D, 4.20 V) and 3.8 V ones (BV-4D, or a 3.8 V
+cell in a BL-4D shell, 4.34 V). They read different BSI values on the TWL4030
+MADC (BL-4D raw ~675, 3.8 V ~650, measured 2026-11-09, stable to a few counts).
+The driver reads the 'bsi' io-channel at probe: a value inside the narrow 3.8 V
+window (raw 635-660, module params) selects 4.34 V, everything else - the 3.7 V
+value, an out-of-range or failed read, a missing channel - stays at the safe
+4.20 V so a 3.7 V cell is never overcharged. override_voreg_mv still wins.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts |  4 ++
+ drivers/power/supply/bq2415x_charger.c   | 48 ++++++++++++++++++++++++
+ 2 files changed, 52 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index 180354cbf..403ff03c9 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -468,6 +468,10 @@ bq24153a: charger@6b {
+ 		ti,resistor-sense = <68>;
+ 
+ 		ti,usb-charger-detection = <&bcc>;
++
++		/* BSI (battery size indicator) for battery identification */
++		io-channels = <&twl_madc 0>;
++		io-channel-names = "bsi";
+ 	};
+ 
+ 	/* bq27521 fuel gauge (address from elinux.org/N950) */
+diff --git a/drivers/power/supply/bq2415x_charger.c b/drivers/power/supply/bq2415x_charger.c
+index 4e41432c8..a02013bbe 100644
+--- a/drivers/power/supply/bq2415x_charger.c
++++ b/drivers/power/supply/bq2415x_charger.c
+@@ -29,6 +29,7 @@
+ #include <linux/acpi.h>
+ 
+ #include <linux/power/bq2415x_charger.h>
++#include <linux/iio/consumer.h>
+ 
+ /* timeout for resetting chip timer */
+ #define BQ2415X_TIMER_TIMEOUT		10
+@@ -192,6 +193,23 @@ static int override_voreg_mv;
+ module_param(override_voreg_mv, int, 0444);
+ MODULE_PARM_DESC(override_voreg_mv,
+ 	"override the battery regulation voltage in mV (0 = keep the firmware value)");
++
++/*
++ * Battery identification by the BSI (battery size indicator) resistor, read
++ * through the TWL4030 MADC "bsi" channel. On the Nokia N950 a 3.7 V battery
++ * (BL-4D, charge to 4.20 V) and a 3.8 V one (BV-4D or a 3.8 V cell in a BL-4D
++ * shell, charge to 4.34 V) read measurably different raw values
++ * (BL-4D ~675, BV-4D ~648, 2026-11-09). A reading clearly inside the narrow
++ * 3.8 V window selects 4.34 V; ANYTHING ELSE - the 3.7 V value, an out-of-range
++ * reading, a missing channel - stays at the safe 4.20 V, so a 3.7 V cell is
++ * never overcharged. override_voreg_mv (command line) wins over the detection.
++ */
++static int bsi_bv_low = 635;
++module_param(bsi_bv_low, int, 0444);
++static int bsi_bv_high = 660;
++module_param(bsi_bv_high, int, 0444);
++static int bsi_bv_voreg_mv = 4340;
++module_param(bsi_bv_voreg_mv, int, 0444);
+ static DEFINE_MUTEX(bq2415x_i2c_mutex);
+ 
+ /**** i2c read functions ****/
+@@ -1502,6 +1520,34 @@ static struct attribute *bq2415x_sysfs_attrs[] = {
+ 
+ ATTRIBUTE_GROUPS(bq2415x_sysfs);
+ 
++static void bq2415x_detect_battery(struct bq2415x_device *bq)
++{
++	struct iio_channel *bsi;
++	int raw, ret;
++
++	if (override_voreg_mv)
++		return;				/* the command line decides */
++
++	bsi = devm_iio_channel_get(bq->dev, "bsi");
++	if (IS_ERR(bsi)) {
++		dev_info(bq->dev, "no BSI channel, charging to the default voltage\n");
++		return;
++	}
++	ret = iio_read_channel_raw(bsi, &raw);
++	if (ret < 0) {
++		dev_info(bq->dev, "BSI read failed (%d), charging to the default voltage\n", ret);
++		return;
++	}
++	if (raw >= bsi_bv_low && raw <= bsi_bv_high) {
++		dev_info(bq->dev, "BSI %d: 3.8 V battery, charging to %d mV\n",
++			 raw, bsi_bv_voreg_mv);
++		bq->init_data.battery_regulation_voltage = bsi_bv_voreg_mv;
++	} else {
++		dev_info(bq->dev, "BSI %d: charging to %d mV (safe default)\n",
++			 raw, bq->init_data.battery_regulation_voltage);
++	}
++}
++
+ static int bq2415x_power_supply_init(struct bq2415x_device *bq)
+ {
+ 	int ret;
+@@ -1660,6 +1706,8 @@ static int bq2415x_probe(struct i2c_client *client)
+ 		bq->init_data.battery_regulation_voltage = override_voreg_mv;
+ 	}
+ 
++	bq2415x_detect_battery(bq);
++
+ 	bq2415x_reset_chip(bq);
+ 
+ 	ret = bq2415x_power_supply_init(bq);
+-- 
+2.56.0
+
