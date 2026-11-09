@@ -1,0 +1,108 @@
+From 648b706c5938bfcc138644a6f5d60fa9be9dfbfa Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 10:50:58 +0100
+Subject: [PATCH 36/38] ARM: dts: omap3-n950: the bq24153a charger behind the
+ TWL5031's charge control switch
+
+Describe the battery charger: the bq24153a at 0x6b on i2c2 with the
+N900's values (4.20 V, 650/100 mA at 68 mOhm; the N950's sense resistor
+is unmeasured, which is safe while the input stays at 500 mA), fed by the
+twl5031-bcc node that closes the TWL5031's VBUS switch on a cable and
+reports the USB supply the charger follows. The fuel gauge gets the
+charger as its supply so it reports Charging.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 39 ++++++++++++++++++++++--
+ drivers/power/supply/twl5031_bcc.c       |  6 +++-
+ 2 files changed, 41 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index 39a47e80c..4bcbc0282 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -160,6 +160,16 @@ &modem {
+ };
+ 
+ &twl {
++	/*
++	 * Battery charge control: the switch between VBUS and the bq24153a.
++	 * Closed on VBUS after the TWL5031's USB charger detection.
++	 */
++	bcc: charge-control {
++		compatible = "nokia,twl5031-bcc";
++		usb-phy = <&usb2_phy>;
++		usb3v1-supply = <&vusb3v1>;
++	};
++
+ 	twl_audio: audio {
+ 		compatible = "ti,twl4030-audio";
+ 		ti,enable-vibra = <1>;
+@@ -373,13 +383,36 @@ proximity@38 {
+ 	};
+ 
+ 	/*
+-	 * bq27521 fuel gauge (address from elinux.org/N950). The bq24153a
+-	 * charger at 0x6b is left out: its charge current settings depend on
+-	 * values (sense resistor) not known here, and wrong ones are unsafe.
++	 * bq24153a charger. It gets VBUS only through the TWL5031's battery
++	 * charge control switch (the bcc node below), and follows that node's
++	 * USB supply for the input current, like the N900's isp1704.
++	 *
++	 * The sense resistor is not known; 68 mOhm is the N900's value. A
++	 * wrong value scales the charge and termination currents, which is
++	 * harmless as long as the input is limited to 500 mA (the switch
++	 * driver reports nothing higher), but do not enable a dedicated
++	 * charger mode before it has been measured. 4.20 V suits the BL-4D;
++	 * a BV-4D (3.8 V cell) would take 4.35 V but must not be mixed up.
+ 	 */
++	bq24153a: charger@6b {
++		compatible = "ti,bq24153a";
++		reg = <0x6b>;
++
++		ti,current-limit = <100>;
++		ti,weak-battery-voltage = <3400>;
++		ti,battery-regulation-voltage = <4200>;
++		ti,charge-current = <650>;
++		ti,termination-current = <100>;
++		ti,resistor-sense = <68>;
++
++		ti,usb-charger-detection = <&bcc>;
++	};
++
++	/* bq27521 fuel gauge (address from elinux.org/N950) */
+ 	fuel-gauge@55 {
+ 		compatible = "ti,bq27521";
+ 		reg = <0x55>;
++		power-supplies = <&bq24153a>;
+ 	};
+ };
+ 
+diff --git a/drivers/power/supply/twl5031_bcc.c b/drivers/power/supply/twl5031_bcc.c
+index 653df94b4..eb1e363fd 100644
+--- a/drivers/power/supply/twl5031_bcc.c
++++ b/drivers/power/supply/twl5031_bcc.c
+@@ -167,7 +167,12 @@ static int twl5031_bcc_connect(struct twl5031_bcc *bcc)
+ 			break;
+ 	} while (time_before(jiffies, timeout));
+ 
++	ctl &= ~BCC_SW_USB_DET_EN;	/* keep the result, stop the state machine */
++	ret = bcc_write(bcc, BCC_CTRL2, ctl);
++	if (ret < 0)
++		return ret;
+ 	if (force_usb500) {
++		/* with the state machine stopped, software may own the current sources */
+ 		int c1 = bcc_read(bcc, BCC_USB_CHRG_CTRL1);
+ 
+ 		if (c1 >= 0)
+@@ -177,7 +182,6 @@ static int twl5031_bcc_connect(struct twl5031_bcc *bcc)
+ 	ctl |= BCC_SW_USBCHRG_EN;
+ 	if (det == BCC_USB_DET_STS_500MA || force_chrg_det)
+ 		ctl |= BCC_SW_CHRG_DET;
+-	ctl &= ~BCC_SW_USB_DET_EN;	/* keep the result, stop the state machine */
+ 	ret = bcc_write(bcc, BCC_CTRL2, ctl);
+ 
+ 	if (bcc->usb3v1 && regulator_is_enabled(bcc->usb3v1))
+-- 
+2.56.0
+

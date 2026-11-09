@@ -1,0 +1,65 @@
+From 3ab5578e13ce58eab0a52c5c0b406c76ceefbe76 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 13:24:26 +0100
+Subject: [PATCH 38/38] ARM: dts: omap3-n950: overclock turbo OPPs 1.1/1.2/1.3
+ GHz at OPP1G's voltage
+
+At the owner's request. First step: the higher frequencies at 1.375 V (OPP1G's
+voltage) and its forward body bias, which the ABB table already has - no
+regulator-table or voltage-limit change, so nothing new runs at probe (an
+earlier version that extended the ABB table reset at boot). All turbo OPPs;
+user space caps scaling_max_freq to the step that passed its stability test. If
+a step is not stable at 1.375 V its voltage is raised separately, with a
+matching ABB entry.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 32 ++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index cf08defb7..51d46216f 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -170,6 +170,38 @@ &cpu0_opp_table {
+ 	opp-1000000000 {
+ 		opp-supported-hw = <0xffffffff 3>;
+ 	};
++
++	/*
++	 * Overclocking, at the owner's request (2026-11-09). Not in TI's tables.
++	 * First step: the higher frequencies at OPP1G's voltage (1.375 V) and its
++	 * forward body bias, which the ABB table already has - no regulator-table
++	 * or voltage-limit change, so nothing new runs at probe. All turbo OPPs;
++	 * user space caps scaling_max_freq (/etc/n950-maxfreq) to the step that
++	 * passed its stability test (n950-octest), and the cpu thermal zone
++	 * throttles at 80 C. If a step is not stable at 1.375 V its voltage (with
++	 * a matching ABB entry) is raised separately.
++	 */
++	opp-1100000000 {
++		opp-hz = /bits/ 64 <1100000000>;
++		opp-microvolt = <1375000 1375000 1375000>,
++				 <1375000 1375000 1375000>;
++		opp-supported-hw = <0xffffffff 3>;
++		turbo-mode;
++	};
++	opp-1200000000 {
++		opp-hz = /bits/ 64 <1200000000>;
++		opp-microvolt = <1375000 1375000 1375000>,
++				 <1375000 1375000 1375000>;
++		opp-supported-hw = <0xffffffff 3>;
++		turbo-mode;
++	};
++	opp-1300000000 {
++		opp-hz = /bits/ 64 <1300000000>;
++		opp-microvolt = <1375000 1375000 1375000>,
++				 <1375000 1375000 1375000>;
++		opp-supported-hw = <0xffffffff 3>;
++		turbo-mode;
++	};
+ };
+ 
+ &twl {
+-- 
+2.56.0
+
