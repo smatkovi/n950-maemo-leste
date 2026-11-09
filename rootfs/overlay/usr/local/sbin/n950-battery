@@ -2,9 +2,14 @@
 # Tell the kernel which battery is inserted, for the charge-to voltage.
 # Edits /boot/cmdline (read by ubiboot at the next boot); a battery swap is a
 # power cycle, so the change takes effect exactly then.
+# The owner's batteries (2026-11-09): original Nokia BL-4D cells (3.7 V, charge
+# to 4.20 V) and a "Maximus BL-4D 1450mAh 3.8V" - a 3.8 V cell in a BL-4D shell
+# with the BL-4D's BSI resistor, so NO electrical detection can tell them apart
+# (a real BV-4D is also 3.8 V). The label on the inserted battery decides:
 #   n950-battery          - show the current setting
-#   n950-battery bl-4d    - 4.20 V (default, safe for both)
-#   n950-battery bv-4d    - 4.34 V (the BV-4D's full capacity; NEVER with a BL-4D)
+#   n950-battery bl-4d    - 4.20 V (default; safe for every battery)
+#   n950-battery bv-4d    - 4.34 V (only for a 3.8 V cell: BV-4D or Maximus 3.8V;
+#                           NEVER with a 3.7 V battery inserted)
 F=/boot/cmdline
 TOK="bq2415x_charger.override_voreg_mv=4340"
 case "$1" in
