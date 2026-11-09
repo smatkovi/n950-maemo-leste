@@ -1,0 +1,30 @@
+From 296c28ea424e3dd9cdaaa73386e88542c8ee8930 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 07:55:48 +0100
+Subject: [PATCH 3/3] arm: decompressor: invalidate I-cache and branch
+ predictor before enabling caches (kexec)
+
+---
+ arch/arm/boot/compressed/head.S | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/arm/boot/compressed/head.S b/arch/arm/boot/compressed/head.S
+index ab91bf11..eef810f9 100644
+--- a/arch/arm/boot/compressed/head.S
++++ b/arch/arm/boot/compressed/head.S
+@@ -465,6 +465,12 @@ __armv4_mmu_cache_on:
+ 
+ __armv7_mmu_cache_on:
+ 		mov	r12, lr
++		@ kexec-fix: invalidate I-cache + branch predictor before (re)enabling caches
++		mov	r0, #0
++		mcr	p15, 0, r0, c7, c5, 0	@ ICIALLU: invalidate I-cache
++		mcr	p15, 0, r0, c7, c5, 6	@ BPIALL: invalidate branch predictor
++		mcr	p15, 0, r0, c7, c10, 4	@ DSB
++		mcr	p15, 0, r0, c7, c5, 4	@ ISB
+ #ifdef CONFIG_MMU
+ 		mrc	p15, 0, r11, c0, c1, 4	@ read ID_MMFR0
+ 		tst	r11, #0xf		@ VMSA
+-- 
+2.56.0
+

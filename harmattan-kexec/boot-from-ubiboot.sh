@@ -27,6 +27,8 @@
 #   ./boot-from-ubiboot.sh meego                 # deploy + kexec the mmc-fix tracer kernel
 #   ./boot-from-ubiboot.sh meego-read            # after the reset: read the tracer pages
 #   ./boot-from-ubiboot.sh erase-log             # upload mtderase, erase mtd3 (before a tracer run)
+#   ./boot-from-ubiboot.sh deploy-pr13 [zImage]  # copy the module-compatible kernel to p2/boot, ubiboot OS2 slot 4
+#   ./boot-from-ubiboot.sh meego-pr13 [zImage]   # kexec that kernel from p2 (NOLO cmdline), watch USB for MeeGo
 #
 # Second argument overrides the device IP (default 192.168.2.15).
 set -uo pipefail
@@ -36,6 +38,9 @@ T() { python3 "$HERE/ubiboot-telnet.py" "$1" "$DEV"; }
 CLEAN() { sed 's/\x1b\[[0-9;]*m//g' | grep -vE '^/ # |__ENDOFCMD__'; }
 
 MEEGO_KERNEL=${MEEGO_KERNEL:-$HOME/n950/zImage_2.6.32.48-n950tr-mmc}
+PR13_KERNEL=${PR13_KERNEL:-$HOME/n950/zImage_2.6.32.54-dfl61-20121301-mmcfix}
+PR13_LABEL="MeeGo PR1.3 + mmc fix"
+PR13_SLOT=4
 LESTE_CMDLINE_EXTRA="omap_wdt.early_enable=1"
 
 usb_watch() {   # $1 = seconds; prints the N950 USB state, "LESTE" if a non-ubiboot gadget appears
@@ -108,6 +113,44 @@ meego)
 	done
 	;;
 
+deploy-pr13)
+	K=${2:-$PR13_KERNEL}; B=$(basename "$K")
+	[ -f "$K" ] || { echo "no $K - build it: ./build-pr13.sh"; exit 1; }
+	echo "== copy $B to p2/boot and make it ubiboot OS2 slot $PR13_SLOT (\"$PR13_LABEL\") =="
+	T 'rm -f /tmp/zI; (setsid nc -l -p 9999 > /tmp/zI </dev/null 2>/dev/null &); echo NC_UP' | CLEAN
+	sleep 1; cat "$K" > "/dev/tcp/$DEV/9999"; sleep 2
+	PCMD5=$(md5sum < "$K" | cut -c1-32); echo "pc md5:     $PCMD5"
+	T "echo \"device md5: \$(md5sum < /tmp/zI | cut -c1-32)\"; [ \"\$(md5sum < /tmp/zI | cut -c1-32)\" = $PCMD5 ] || { echo MD5_MISMATCH; exit 1; }; \
+	   mkdir -p /mnt/2 /mnt/1; mount /dev/mmcblk0p2 /mnt/2 && cp /tmp/zI /mnt/2/boot/$B && sync && umount /mnt/2 && echo KERNEL_COPIED; \
+	   mount /dev/mmcblk0p1 /mnt/1 && cd /mnt/1/boot && cp ubiboot.conf ubiboot.conf.bak-\$(date +%Y%m%d%H%M) && \
+	   sed -i -e 's|^G_OS2_${PR13_SLOT}_LABEL=.*|G_OS2_${PR13_SLOT}_LABEL=\"$PR13_LABEL\"|' -e 's|^G_OS2_${PR13_SLOT}_FILE=.*|G_OS2_${PR13_SLOT}_FILE=\"/boot/Harmattan/boot/$B\"|' ubiboot.conf && \
+	   grep -E '^G_OS2_[0-9]_(LABEL|FILE)' ubiboot.conf && sync && cd / && umount /mnt/1 && echo CONF_UPDATED" | CLEAN
+	echo "(the local copy ~/n950/ubiboot-flash/ubiboot.conf.deploy is updated by hand to match)"
+	;;
+
+meego-pr13)
+	K=${2:-$PR13_KERNEL}; B=$(basename "$K")
+	echo "== kexec /boot/$B from p2 with NOLO's cmdline (/proc/original_cmdline, incl. bootreason=) =="
+	T 'echo "bootreason now: $(tr " " "\n" < /proc/original_cmdline | grep ^bootreason)"' | CLEAN
+	echo "   (pwr_key = Harmattan boots to USER; after a USB-started NOLO it would say usb)"
+	T "mkdir -p /mnt/2; mount -o ro /dev/mmcblk0p2 /mnt/2 && ls -l /mnt/2/boot/$B && \
+	   kexec -l --type=zImage --command-line=\"\$(cat /proc/original_cmdline)\" /mnt/2/boot/$B && echo LOAD_OK && \
+	   umount /mnt/2; sync; /usr/bin/disable_pm 2>/dev/null; echo 'firing kexec -e'; kexec -e" | CLEAN
+	echo "== watching USB for up to 240 s: Nokia gadget 0421:xxxx (not 0105/0106) = MeeGo userland up with g_nokia;"
+	echo "   0421:0106/0105 = NOLO after a reset; 0525:a4ab = ubiboot back =="
+	T0=$(date +%s); last=""
+	for i in $(seq 1 240); do
+		cur=$(lsusb | grep -oE '(0421|0525):[0-9a-f]{4}' | sort -u | tr '\n' ' ')
+		[ "$cur" != "$last" ] && { echo "[+$(( $(date +%s)-T0 )) s] usb: ${cur:-none}"; last=$cur; }
+		case "$cur" in
+			*0421:0106*|*0421:0105*) ;;
+			*0421:*) echo "=> MeeGo is up: $(lsusb | grep 0421 | head -1)"; break;;
+			*0525:a4ab*) echo "=> ubiboot is back = the kernel reset"; break;;
+		esac
+		sleep 1
+	done
+	;;
+
 meego-read)
 	echo "== Harmattan boot tracer: OneNAND block 80 = mtd3 + 0x40000 =="
 	PAGES=$(T 'for p in $(seq 0 31); do printf "page %02d: " $p; dd if=/dev/mtd3 bs=4096 skip=$((64+p)) count=1 2>/dev/null | head -c 16 | hexdump -C | head -1; done' | CLEAN | grep '^page')
@@ -140,5 +183,5 @@ PY
 	;;
 
 *)
-	sed -n '2,36p' "$0"; exit 1 ;;
+	sed -n '2,38p' "$0"; exit 1 ;;
 esac

@@ -225,9 +225,11 @@ branch `mer-n9-2.6.32-20121301`, `rm581_defconfig`).
 
 Run: device cold-started with USB plugged in → ubiboot maintenance → `erase-log` →
 `meego` (kexec of `zImage_2.6.32.48-n950tr-mmc`, md5 70b6cd1b, cmdline from
-`/proc/original_cmdline`, kexec fired 07:36:30). Result on the screen (reported by the
-owner): Nokia logo, then Harmattan's **R&D screen** with the new kernel's version and
-build date and `bootreason: usb`. That screen is drawn by `/sbin/preinit`
+`/proc/original_cmdline`). The `meego` run itself was interrupted on the PC side, so its
+md5/LOAD_OK lines were not seen; what is on record is ubiboot's USB gadget dropping at
+07:37:32 and, on the screen (reported by the owner): Nokia logo, then Harmattan's **R&D
+screen** with the new kernel's version, a build date of today — which identifies the
+kernel as the tracer build — and `bootreason: usb`. That screen is drawn by `/sbin/preinit`
 (`show_rd_versions`, `text2screen`) running **from the eMMC root** — so the root mount
 that hung every kexec'd 2.6.32 boot so far now succeeds. It stayed on that screen; the
 owner restarted with the power key after ~1.5 min (NOLO at 07:39:09, ubiboot back).
@@ -243,10 +245,20 @@ starts blind: no compositor, no USB gadget, no WLAN. p2's `/var/log` is untouche
 (Harmattan has no syslog by default), so there is no userland log of that minute.
 
 Two more facts for the next step:
-* `bootreason: usb` — the original ATAGs (NOLO's boot reason) survive the kexec. With
-  reason `usb`/`charger` Harmattan's dsme boots to ACT_DEAD (charging screen), not USER;
-  for a normal boot choose MeeGo from the ubiboot menu after a power-key start with USB
-  unplugged (reason `pwr_key`).
+* `bootreason: usb` — the boot reason is a **cmdline token from NOLO**: ubiboot's
+  `/proc/original_cmdline` is NOLO's full line (`... bootreason=pwr_key bootmode=normal
+  nolo=2.3.6 product_name=RM-680 imei=... g_nokia.iSerialNumber=... omapdss.def_disp_enabled=1
+  ...`), and that is what `meego` passes to the kexec'd kernel. Harmattan's
+  `/sbin/getbootstate` (strings) parses `bootreason=` from `/proc/cmdline`: `pwr_key` →
+  USER ("User pressed power button"), `charger` → ACT_DEAD ("User attached charger"),
+  `sw_rst`/`32wd_to`/`swdg_to` → reset handling; `usb` is not in its table ("Unknown
+  bootreason ... passed by nolo"). The morning run had been started by plugging USB in
+  (NOLO said `usb`); the later session was started with the power key and carries
+  `pwr_key`. So: **start the device with the power key** (USB may be plugged in), and a
+  kexec from the maintenance shell is a normal USER boot whose outcome is observable from
+  the PC (MeeGo's g_nokia gadget 0421:xxxx on `lsusb`, UI on the screen). Deploy the
+  module-compatible kernel as a **new file plus a new ubiboot OS2 entry** (slot 4; leave
+  slot 3 and the stock entry alone) so it is also selectable from the menu.
 * Next milestone = a module-compatible kernel: `2.6.32.54-dfl61-20121301` built from the
   PR1.3 source (`~/ps/harmattan-src/kernel-pr13/src`) with `rm581_defconfig` as is (the
   CRCs of the exported symbols depend on the config), `CONFIG_LOCALVERSION="-dfl61-20121301"`,
@@ -256,3 +268,45 @@ Two more facts for the next step:
   against the build's `Module.symvers`. If they match, the stock modules load and nothing
   on p2 needs to change but `/boot`; if not, install the build's own modules next to the
   stock ones.
+
+## Update 2026-11-09 ~08:30 — module-compatible kernel: modules load, Aegis is the next wall
+
+**Built** `zImage_2.6.32.54-dfl61-20121301-mmcfix` (md5 262a04fd, `build-pr13.sh`) from the
+nemomobile tree (`~/ps/harmattan-src/kernel-pr13/src`, branch `n950-mmcfix`: host fixes
+0005/0007/0008, mmc retry 0003, decompressor cache fix 0004, IOMMU tristate again 0006).
+`crc-compare.py`: `module_layout` and all 1784 symbol CRCs of the 91 stock modules match,
+0 mismatches — the stock modules load on it. Deployed to p2 `/boot` as ubiboot OS2 slot 4
+(`deploy-pr13`; p1 `ubiboot.conf` backup `ubiboot.conf.bak-*`).
+
+**Test** (`meego-pr13`, kexec from the maintenance shell, NOLO cmdline with
+`bootreason=pwr_key`): USB timeline on the PC — ubiboot gadget gone 08:05:39; **+12 s:
+`0421:03d1 "Nokia N950"`** = Harmattan's `g_nokia` gadget, so userland was up and had
+**loaded a stock module**; +16 s: disconnect, NOLO (`0421:0105`), ubiboot back at +57 s.
+The new ubiboot session's `/proc/original_cmdline` says **`bootreason=sw_rst`**: a software
+reboot, not a watchdog (`32wd_to`) — and no oops/panic text in mtd3.
+
+**Cause, found in the source:** the nemomobile tree has Nokia's **Aegis security framework
+removed** (`security/aegis/`, `include/linux/aegis/`, `CONFIG_SECURITY_AEGIS{,_VALIDATOR,
+_RESTOK,_CREDS,_CREDP}` and `SECURITY_DMESG_RESTRICT` gone from `rm581_defconfig`,
+`commoncap.c` without `credp_apply`). Harmattan userland is built on it (`aegis-session`,
+`aegisfs` — upstart job with `respawn limit 3 300` + `reboot` stanza — libcreds, the
+validator). Without the LSM those jobs fail and upstart reboots the device: exactly the
+observed sw_rst after ~16 s. The CRC comparison could not see this: Aegis exports no symbol
+the 91 modules import.
+
+**Fix path:** build from **Nokia's pristine PR1.3 source**, now at
+`~/ps/harmattan-src/dl-nokia-pr13/` (`kernel_2.6.32-20121301+0m8.tar.gz`, md5 32dd66fd, from
+the Harmattan SDK sources ISO `maemo.cloud-7.de/HARM/N9/1.3/cdrom.iso`; `.dsc` checksums
+match). Full diff to the Nemo tree: 49 files, the big ones are vibra_spi.c, mach-omap2/Makefile,
+wait.h, cgroup.c, pa.c, proc-v7.S, tty_io.c, the gadget Kconfig/f_obex, plus the Aegis removal;
+Nemo-only additions are FunctionFS and the rm696_nemo defconfigs. Nokia's tree needs only
+the perl fix (0005), 0003 and 0004 — no `-mno-unaligned-access`, no `.arch_extension`, IOMMU
+is tristate. Same `build-pr13.sh` with `KSRC=.../dl-nokia-pr13/kernel-2.6.32`. The build was
+not started: the session's permission classifier blocked running the build in a directory a
+helper had downloaded; the owner has to allow it or run it.
+
+**Side effect to know:** after Harmattan's software reset the eMMC stays in a state ubiboot's
+stock 2.6.32 mmc core cannot initialise (`mmc0: error -110 whilst initialising MMC card`), so
+ubiboot comes up **without its config** (defaults: IP 192.168.0.15, DHCP offers
+192.168.0.100, no partition export, nothing bootable). A cold start (power off, power key)
+clears it. Ubiboot's own kernel would want patch 0003 too.
