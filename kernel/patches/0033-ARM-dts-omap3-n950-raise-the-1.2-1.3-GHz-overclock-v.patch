@@ -1,0 +1,65 @@
+From e8ad56f738f4f8274a4afb9555eab966226246f7 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 9 Nov 2026 14:32:29 +0100
+Subject: [PATCH] ARM: dts: omap3-n950: raise the 1.2/1.3 GHz overclock
+ voltages
+
+1.1 GHz is stable at 1.375 V (tested), 1.2 GHz is not. Raise 1.2 GHz to 1.400 V
+and 1.3 GHz to 1.450 V (the TWL4030 VDD1 maximum), with matching forward body
+bias entries and the supply's absolute-max raised. Boot must keep boost off
+(the overclock OPPs are only safe to enter pinned, via n950-octest).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 25 ++++++++++++++++++++----
+ 1 file changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index 301abf571..180354cbf 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -190,20 +190,37 @@ opp-1100000000 {
+ 	};
+ 	opp-1200000000 {
+ 		opp-hz = /bits/ 64 <1200000000>;
+-		opp-microvolt = <1375000 1375000 1375000>,
+-				 <1375000 1375000 1375000>;
++		opp-microvolt = <1400000 1400000 1400000>,
++				 <1400000 1400000 1400000>;
+ 		opp-supported-hw = <0xffffffff 3>;
+ 		turbo-mode;
+ 	};
+ 	opp-1300000000 {
+ 		opp-hz = /bits/ 64 <1300000000>;
+-		opp-microvolt = <1375000 1375000 1375000>,
+-				 <1375000 1375000 1375000>;
++		opp-microvolt = <1450000 1450000 1450000>,
++				 <1450000 1450000 1450000>;
+ 		opp-supported-hw = <0xffffffff 3>;
+ 		turbo-mode;
+ 	};
+ };
+ 
++&opp_supply_mpu_iva {
++	ti,absolute-max-voltage-uv = <1450000>;
++};
++
++/* forward body bias (as for OPP1G) at the overclock voltages too */
++&abb_mpu_iva {
++	ti,abb_info = <
++	/*uV		ABB	efuse	rbb_m	fbb_m	vset_m*/
++	1012500		0	0	0	0	0
++	1200000		0	0	0	0	0
++	1325000		0	0	0	0	0
++	1375000		1	0	0	0	0
++	1400000		1	0	0	0	0
++	1450000		1	0	0	0	0
++	>;
++};
++
+ &twl {
+ 	/*
+ 	 * Battery charge control: the switch between VBUS and the bq24153a.
+-- 
+2.56.0
+
