@@ -13,6 +13,8 @@
 #     end of do_basic_setup and then hangs in prepare_namespace waiting for root,
 #     because the eMMC times out on its first access after the kexec.  The kernel
 #     zImage_2.6.32.48-n950tr-mmc carries the retry fix (patch 0003) plus the tracer.
+#     2026-11-09: tested - stage 25 reached, root mounted, preinit drew the R&D
+#     screen.  What is left is the module mismatch (.48 kernel vs .54 modules).
 #
 # Device access: ubiboot maintenance (USB plugged in when ubiboot starts) runs a
 # DHCP server offering 192.168.2.100 to the PC and listens on telnet/ssh at
@@ -91,8 +93,19 @@ meego)
 	T "echo \"device md5: \$(md5sum < /tmp/zI | cut -c1-32)\"; mount /dev/mmcblk0p2 /mnt/2 && cp /tmp/zI /mnt/2/boot/$(basename "$MEEGO_KERNEL") && sync && umount /mnt/2 && echo COPIED" | CLEAN
 	echo "== kexec it with the Harmattan cmdline (root=/dev/mmcblk0p2) =="
 	T 'kexec -l --type=zImage --command-line="$(cat /proc/original_cmdline)" /tmp/zI && echo LOAD_OK; /usr/bin/disable_pm 2>/dev/null; sync; echo "firing kexec -e"; kexec -e' | CLEAN
-	echo "== screen goes black. Wait ~30 s for the watchdog reset or pull the battery, bring the"
-	echo "   device back into ubiboot maintenance, then run:  $0 meego-read"
+	echo "== 2026-11-09: this kernel reaches stage 25. The screen shows the Nokia logo and then the"
+	echo "   R&D screen (kernel version, build date, bootreason) drawn by Harmattan's preinit from the"
+	echo "   eMMC root. It stays there: the .48 kernel cannot load the stock .54 modules (PVR, g_nokia,"
+	echo "   wl12xx ...), so no UI, no USB gadget. Restart with the power key, USB plugged in, to get"
+	echo "   back into ubiboot maintenance, then run:  $0 meego-read"
+	echo "== watching USB for up to 240 s (NOLO 0421:0106/0105 = device reset; 0525:a4ab = ubiboot back) =="
+	T0=$(date +%s); last=""
+	for i in $(seq 1 240); do
+		cur=$(lsusb | grep -oE '(0421|0525):[0-9a-f]{4}' | sort -u | tr '\n' ' ')
+		[ "$cur" != "$last" ] && { echo "[+$(( $(date +%s)-T0 )) s] usb: ${cur:-none}"; last=$cur; }
+		case "$cur" in *0525:a4ab*) echo "ubiboot maintenance is back - run: $0 meego-read"; break;; esac
+		sleep 1
+	done
 	;;
 
 meego-read)

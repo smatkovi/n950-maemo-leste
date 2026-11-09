@@ -220,3 +220,39 @@ branch `mer-n9-2.6.32-20121301`, `rm581_defconfig`).
 | File | What |
 | --- | --- |
 | `leste-evidence.sh` | read-only: ubiboot.log, p4 superblock (note: ubiboot itself mounts p4 rw, so its mount time is useless), p4 `/var/log` |
+
+## Update 2026-11-09 ~07:50 — MeeGo: the mmc fix works, stage 25 reached
+
+Run: device cold-started with USB plugged in → ubiboot maintenance → `erase-log` →
+`meego` (kexec of `zImage_2.6.32.48-n950tr-mmc`, md5 70b6cd1b, cmdline from
+`/proc/original_cmdline`, kexec fired 07:36:30). Result on the screen (reported by the
+owner): Nokia logo, then Harmattan's **R&D screen** with the new kernel's version and
+build date and `bootreason: usb`. That screen is drawn by `/sbin/preinit`
+(`show_rd_versions`, `text2screen`) running **from the eMMC root** — so the root mount
+that hung every kexec'd 2.6.32 boot so far now succeeds. It stayed on that screen; the
+owner restarted with the power key after ~1.5 min (NOLO at 07:39:09, ubiboot back).
+
+Tracer pages read back afterwards (`meego-read`): stages 1–25 all written, 2 = checksum
+OK, **25 = init_post / exec init** (new), no error page. Before this run block 80 still
+held the 2026-11-08 result (1–24, no 25), so the difference is the mmc retry.
+
+Why it stops at the R&D screen: this kernel is `2.6.32.48-dfl61-n950tr`, p2's modules are
+`2.6.32.54-dfl61-20121301` with `CONFIG_MODVERSIONS=y`; PVR (`pvrsrvkm`, `omaplfb`),
+`g_nokia`, `wl12xx`, `twl4030_keypad`, `twl4030-pwrbutton` … are modules, so upstart
+starts blind: no compositor, no USB gadget, no WLAN. p2's `/var/log` is untouched
+(Harmattan has no syslog by default), so there is no userland log of that minute.
+
+Two more facts for the next step:
+* `bootreason: usb` — the original ATAGs (NOLO's boot reason) survive the kexec. With
+  reason `usb`/`charger` Harmattan's dsme boots to ACT_DEAD (charging screen), not USER;
+  for a normal boot choose MeeGo from the ubiboot menu after a power-key start with USB
+  unplugged (reason `pwr_key`).
+* Next milestone = a module-compatible kernel: `2.6.32.54-dfl61-20121301` built from the
+  PR1.3 source (`~/ps/harmattan-src/kernel-pr13/src`) with `rm581_defconfig` as is (the
+  CRCs of the exported symbols depend on the config), `CONFIG_LOCALVERSION="-dfl61-20121301"`,
+  AUTO off, plus patch 0003 (mmc retry; applies cleanly) and the decompressor I-cache/BTB
+  invalidate from the .48 tree. Check offline before flashing anything: `modprobe
+  --dump-modversions` of the 91 stock modules (1784 symbol/CRC pairs, incl. `module_layout`)
+  against the build's `Module.symvers`. If they match, the stock modules load and nothing
+  on p2 needs to change but `/boot`; if not, install the build's own modules next to the
+  stock ones.
