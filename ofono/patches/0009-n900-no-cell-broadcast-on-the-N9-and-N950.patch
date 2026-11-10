@@ -1,0 +1,60 @@
+Description: n900: no cell broadcast on the Nokia N9 and N950
+ The modem of the N9 and N950 resets itself about 1.5 seconds after the
+ CBS atom's SMS_GSM_CB_ROUTING_REQ, so with the CBS atom created in
+ post_online it reset every time the radio came on and never registered.
+ Harmattan does not send that request when the radio comes on. Replaying
+ ofono's post-online requests one by one on an N950 (ofonod stopped):
+ NET_RAT_REQ, NET_CS_STATE_REQ and SMS_RECEIVE_MESSAGE_REQ were answered,
+ the modem reset after SMS_GSM_CB_ROUTING_REQ. Skip the CBS atom on these
+ boards, recognised by their device tree compatible.
+Author: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Forwarded: no
+Last-Update: 2026-11-10
+---
+--- a/plugins/n900.c	2026-11-10 22:49:39.578635926 +0100
++++ b/plugins/n900.c	2026-11-10 22:49:39.588651956 +0100
+@@ -494,6 +494,27 @@
+ 	ofono_radio_settings_create(modem, 0, "isimodem", isi->modem);
+ }
+ 
++/* the board from the device tree: "nokia,omap3-n950", "nokia,omap3-n9" */
++static gboolean board_is_n9_or_n950(void)
++{
++	gchar *buf = NULL;
++	gsize len = 0, i;
++	gboolean found = FALSE;
++
++	if (!g_file_get_contents("/proc/device-tree/compatible", &buf, &len,
++					NULL))
++		return FALSE;
++
++	for (i = 0; i < len; i += strlen(buf + i) + 1) {
++		if (!strcmp(buf + i, "nokia,omap3-n950") ||
++				!strcmp(buf + i, "nokia,omap3-n9"))
++			found = TRUE;
++	}
++
++	g_free(buf);
++	return found;
++}
++
+ static void n900_post_online(struct ofono_modem *modem)
+ {
+ 	struct isi_data *isi = ofono_modem_get_data(modem);
+@@ -502,7 +523,15 @@
+ 
+ 	ofono_netreg_create(modem, 0, "isimodem", isi->modem);
+ 	ofono_sms_create(modem, 0, "isimodem", isi->modem);
+-	ofono_cbs_create(modem, 0, "isimodem", isi->modem);
++	/*
++	 * The modem of the N9 and N950 resets itself about 1.5 s after the
++	 * CBS atom's SMS_GSM_CB_ROUTING_REQ, every time the radio comes on.
++	 * Harmattan does not send it then. No cell broadcast on these boards.
++	 */
++	if (board_is_n9_or_n950())
++		DBG("Nokia N9/N950: no cell broadcast (the modem resets on it)");
++	else
++		ofono_cbs_create(modem, 0, "isimodem", isi->modem);
+ 	ofono_ussd_create(modem, 0, "isimodem", isi->modem);
+ 	ofono_call_settings_create(modem, 0, "isimodem", isi->modem);
+ 	ofono_call_barring_create(modem, 0, "isimodem", isi->modem);

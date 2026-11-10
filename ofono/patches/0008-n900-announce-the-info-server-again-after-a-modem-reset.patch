@@ -1,0 +1,47 @@
+Description: n900: announce the info server again after every modem reset
+ n900_pre_sim() runs again whenever the modem comes back after a reset and
+ created a new PN_EPOC_INFO server on top of the old one. gisi sends
+ PNS_NAME_ADD_REQ only for the first handler bound to a resource, so after
+ the first modem reset the name was never announced again, while the
+ modem's name service had forgotten it in the reset. When the radio came
+ on (MTC_NORMAL) the modem found nobody to answer its
+ INFO_SERIAL_NUMBER_READ_REQ (IMEISV for the network) and reset itself
+ about two seconds later, every time: on the Nokia N950 the modem never
+ stayed online. Harmattan's csd answers that request. Destroy the old
+ server before creating the new one (which deregisters and registers the
+ name again), and in n900_remove().
+ .
+ Found on the N950: with the name registered and the request answered by
+ hand, the modem stayed online; without it, it reset after MTC_NORMAL
+ even with no other ISI traffic.
+Author: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Forwarded: no
+Last-Update: 2026-11-10
+---
+--- a/plugins/n900.c	2026-11-10 22:31:20.006284388 +0100
++++ b/plugins/n900.c	2026-11-10 22:31:20.015364809 +0100
+@@ -386,6 +386,7 @@
+ 	if (isi->timeout)
+ 		g_source_remove(isi->timeout);
+ 
++	isi_infoserver_destroy(isi->infoserver);
+ 	g_isi_client_destroy(isi->client);
+ 	g_isi_modem_destroy(isi->modem);
+ 	g_free(isi);
+@@ -464,6 +465,16 @@
+ 
+ 	DBG("(%p) with %s", modem, isi->ifname);
+ 
++	/*
++	 * pre_sim runs again after every modem reset. The modem's name
++	 * service forgets PN_EPOC_INFO in the reset, and gisi announces a
++	 * server's name only when its first handler is bound: a second
++	 * infoserver on top of the old one never announced it again. The
++	 * modem then got no answer to its serial number (IMEISV) query when
++	 * the radio came on and reset itself, over and over (Nokia N950).
++	 * Drop the old server first so the name is announced afresh.
++	 */
++	isi_infoserver_destroy(isi->infoserver);
+ 	isi->infoserver = isi_infoserver_create(modem, isi->modem);
+ 
+ 	ofono_sim_create(modem, 0, "isimodem", isi->modem);
