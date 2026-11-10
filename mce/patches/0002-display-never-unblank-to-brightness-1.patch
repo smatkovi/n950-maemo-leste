@@ -1,0 +1,59 @@
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Subject: [PATCH] display: never unblank to brightness -1
+
+set_brightness, the brightness to unblank to, stays -1 until the
+display brightness pipe has run while the display is on. At boot the
+pipe runs while the display still counts as off; the brightness filter
+chokes it (returns 0) and display_brightness_trigger() drops the value.
+The first unblank after locking then wrote -1 ("4294967295") to the
+backlight's brightness file, which the kernel rejects with EINVAL, so
+the backlight stayed at 0: on the Nokia N950 the display stayed dark
+after the first lock, while mce reported it on and unlocked. Changing
+the brightness setting once while the display is on hid the problem
+until the next boot.
+
+Before unblanking, run the pipe again if set_brightness is unset, and
+fall back to the setting's 20 % steps if the filter still chokes it.
+
+Found with strace on the N950: write(13, "4294967295", 10) = -1 EINVAL.
+---
+--- a/src/modules/display.c
++++ b/src/modules/display.c
+@@ -221,10 +221,37 @@
+ }
+ 
+ /**
++ * The brightness to unblank to
++ *
++ * set_brightness stays -1 until the brightness pipe has run while the
++ * display is on. At boot it runs while the display still counts as off,
++ * the brightness filter chokes it (0) and the value is dropped; the first
++ * unblank after locking then wrote -1, which the backlight rejects, and
++ * the display stayed dark. Run the pipe again now, and fall back to the
++ * setting's 20 % steps if it is still choked.
++ *
++ * @return The brightness to use, never negative
++ */
++static gint unblank_brightness(void)
++{
++	if (set_brightness < 0)
++		(void)execute_datapipe(&display_brightness_pipe,
++				       GINT_TO_POINTER(set_brightness_unfiltered),
++				       USE_INDATA, CACHE_INDATA);
++
++	if (set_brightness < 0)
++		set_brightness = (maximum_display_brightness *
++				  CLAMP(set_brightness_unfiltered, 1, 5) * 20) / 100;
++
++	return set_brightness;
++}
++
++/**
+  * Unblank display
+  */
+ static void display_unblank(void)
+ {
++	(void)unblank_brightness();
+ 	/* If we unblank, switch on display immediately */
+ 	if (cached_brightness == 0) {
+ 		cached_brightness = set_brightness;
