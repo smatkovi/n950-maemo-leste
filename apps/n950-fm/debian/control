@@ -9,11 +9,12 @@ Rules-Requires-Root: no
 
 Package: n950-fm
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, alsa-utils, pulseaudio-utils
+Depends: ${shlibs:Depends}, ${misc:Depends}, pulseaudio-utils, libcap2-bin
 Recommends: python3
 Description: FM radio for the Nokia N950
  The N950's FM receiver (the FM part of its WL1273, /dev/radio0 through
  radio-wl1273) for Hildon: frequency, seek, mute, signal, stereo, the RDS
  station name and radio text, saved stations. n950-fm-audio plays the
- receiver's analog output from the TWL5031's AUX inputs; n950-fm-test
+ receiver's I2S stream (the sound card "N950 FM") after n950-fm-bt has
+ routed the chip's audio interface to FM over Bluetooth; n950-fm-test
  tries the receiver from a shell.

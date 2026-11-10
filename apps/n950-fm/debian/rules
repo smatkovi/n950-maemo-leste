@@ -4,3 +4,6 @@
 
 override_dh_auto_install:
 	$(MAKE) install DESTDIR=$(CURDIR)/debian/n950-fm PREFIX=/usr
+
+# keep the file capabilities postinst sets: dh_fixperms must not touch them
+# (it does not), and stripping happens before postinst runs

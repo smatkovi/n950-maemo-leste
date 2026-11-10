@@ -16,9 +16,9 @@
  *    driver counts its RDS readers at open()); decoded here.
  *  - The signal is the chip's RSSI level as the driver passes it on, not
  *    V4L2's 0..65535.
- *  - The sound leaves the chip at its analog output into the TWL5031's
- *    AUX inputs; n950-fm-audio sets the mixer up and plays it (see
- *    sound() below).
+ *  - The sound leaves the chip over I2S into McBSP4, the sound card
+ *    "N950 FM", after a Bluetooth vendor command; n950-fm-audio sends it
+ *    and plays the card (see sound() below).
  *
  *   Left/Right  0.1 MHz down/up      Up/Down  seek up/down
  *   m           mute
@@ -106,6 +106,14 @@ static int seek(int up)
 	return ioctl(fd, VIDIOC_S_HW_FREQ_SEEK, &s) ? errno : 0;
 }
 
+/*
+ * The chip's own volume, as Harmattan's FM radio app keeps it; the level
+ * the user hears is PulseAudio's. power_off() leaves the driver's volume
+ * at 1 (it turns the chip off with 1 then 0), and radio-wl1273 restores the
+ * last volume when the chip comes back: set it after every power on.
+ */
+#define FM_CHIP_VOLUME	0x78b8
+
 /* the receiver on: radio-wl1273 leaves reset here, with RDS */
 static int power_on(void)
 {
@@ -113,8 +121,13 @@ static int power_on(void)
 		.index = 0, .audmode = V4L2_TUNER_MODE_STEREO,
 		.rxsubchans = V4L2_TUNER_SUB_STEREO | V4L2_TUNER_SUB_RDS,
 	};
+	struct v4l2_control c = {
+		.id = V4L2_CID_AUDIO_VOLUME, .value = FM_CHIP_VOLUME,
+	};
 
-	return ioctl(fd, VIDIOC_S_TUNER, &t) ? errno : 0;
+	if (ioctl(fd, VIDIOC_S_TUNER, &t))
+		return errno;
+	return ioctl(fd, VIDIOC_S_CTRL, &c) ? errno : 0;
 }
 
 /*
@@ -330,15 +343,14 @@ static gpointer radio_thread(gpointer data)
 	}
 }
 
-/* ---- sound: the TWL5031's AUX inputs played back ---- */
+/* ---- sound: the receiver's I2S stream played back ---- */
 
 /*
- * The receiver's analog output goes to the TWL5031's AUXL and AUXR (the
- * sound card's "FM Radio", Nokia's audio configuration 4 for the RM-680).
- * n950-fm-audio switches those on as the TWL5031's capture and plays it
- * on PulseAudio's default sink through a loopback, as Harmattan's audio
- * policy did; "off" puts the mixer back. /etc/default/n950-fm chooses
- * that or a path inside the codecs without PulseAudio.
+ * The receiver sends its sound over I2S to McBSP4, the sound card
+ * "N950 FM", once a Bluetooth vendor command has routed the chip's audio
+ * interface to FM (the analog route to the TWL5031's AUX inputs carries
+ * silence). n950-fm-audio sends that command and plays the card's capture
+ * on PulseAudio's default sink through a loopback; "off" ends it.
  */
 #define AUDIO_HELPER "n950-fm-audio"
 

@@ -1,0 +1,550 @@
+From cbb912fa8c2d11e8ef126bdedf27f9b2dfa30610 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 10 Nov 2026 16:09:57 +0100
+Subject: [PATCH 44/45] ASoC: codecs: wl1273: bring back the WL1273 FM I2S port
+
+The driver was removed along with its last user, a board file machine
+driver. The Nokia N950 and N9 need it: their FM radio sound reaches the
+SoC only over the WL1273's I2S port (McBSP4), as under Harmattan.
+
+Bring it back for device tree boards, bound to the core's
+"ti,wl1273-codec" child node so simple-audio-card can name it:
+
+- start in FM receiver mode, the use a board wires the port for, so a
+  sound server probing the card sees the receiver's rates and channels;
+- while the radio is off the chip is held in reset: hw_params only
+  stores the I2S configuration and the volume control only the volume,
+  the radio applies both when it switches the chip on, instead of
+  failing on the I2C writes;
+- the I2S configuration goes through the core's set_audio() and only in
+  digital audio mode, so the transmitter path no longer gets the
+  receiver's AUDIO_ENABLE command;
+- take the core lock in the mixer controls, store the channel count
+  that was set, drop wl1273_get_format() (no users) and the void
+  platform remove.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ sound/soc/codecs/Kconfig  |   9 +
+ sound/soc/codecs/Makefile |   2 +
+ sound/soc/codecs/wl1273.c | 468 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 479 insertions(+)
+ create mode 100644 sound/soc/codecs/wl1273.c
+
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index 5b3e36134..d18fef07b 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -2388,6 +2388,15 @@ config SND_SOC_WCD939X_SDW
+ 	  The WCD9390/9395 is a audio codec IC Integrated in
+ 	  Qualcomm SoCs like SM8650.
+ 
++config SND_SOC_WL1273
++	tristate "Texas Instruments WL1273 FM radio I2S port"
++	depends on MFD_WL1273_CORE
++	help
++	  The digital audio interface of the WL1273's FM part: the radio's
++	  sound (and the transmitter's input) as an I2S stream, for a sound
++	  card such as simple-audio-card. The Nokia N950 and N9 take their
++	  FM radio sound this way.
++
+ config SND_SOC_WM0010
+ 	tristate
+ 	depends on SPI_MASTER
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index fc044f224..4c53a0dcf 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -357,6 +357,7 @@ snd-soc-wcd938x-y := wcd938x.o
+ snd-soc-wcd938x-sdw-y := wcd938x-sdw.o
+ snd-soc-wcd939x-y := wcd939x.o
+ snd-soc-wcd939x-sdw-y := wcd939x-sdw.o
++snd-soc-wl1273-y := wl1273.o
+ snd-soc-wm-adsp-y := wm_adsp.o
+ snd-soc-wm0010-y := wm0010.o
+ snd-soc-wm1250-ev1-y := wm1250-ev1.o
+@@ -800,6 +801,7 @@ ifdef CONFIG_SND_SOC_WCD939X_SDW
+ # avoid link failure by forcing sdw code built-in when needed
+ obj-$(CONFIG_SND_SOC_WCD939X) += snd-soc-wcd939x-sdw.o
+ endif
++obj-$(CONFIG_SND_SOC_WL1273)	+= snd-soc-wl1273.o
+ obj-$(CONFIG_SND_SOC_WM0010)	+= snd-soc-wm0010.o
+ obj-$(CONFIG_SND_SOC_WM1250_EV1) += snd-soc-wm1250-ev1.o
+ obj-$(CONFIG_SND_SOC_WM2000)	+= snd-soc-wm2000.o
+diff --git a/sound/soc/codecs/wl1273.c b/sound/soc/codecs/wl1273.c
+new file mode 100644
+index 000000000..ac3694c86
+--- /dev/null
++++ b/sound/soc/codecs/wl1273.c
+@@ -0,0 +1,468 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * ALSA SoC WL1273 codec driver: the digital audio interface of the
++ * WL1273's FM part, the radio's sound (or the transmitter's input) as an
++ * I2S stream with the chip as bit and frame clock master.
++ *
++ * Author:      Matti Aaltonen, <matti.j.aaltonen@nokia.com>
++ *
++ * Copyright:   (C) 2010, 2011 Nokia Corporation
++ */
++
++#include <linux/mfd/wl1273-core.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/initval.h>
++
++/* What the interface is used for, as the "Codec Mode" control names it */
++enum wl1273_mode { WL1273_MODE_BT, WL1273_MODE_FM_RX, WL1273_MODE_FM_TX };
++static const char * const wl1273_audio_route[] = { "Bt", "FmRx", "FmTx" };
++
++struct wl1273_priv {
++	enum wl1273_mode mode;
++	struct wl1273_core *core;
++	unsigned int channels;
++};
++
++static bool wl1273_chip_on(struct wl1273_core *core)
++{
++	return core->mode == WL1273_MODE_RX || core->mode == WL1273_MODE_TX;
++}
++
++static int snd_wl1273_fm_set_i2s_mode(struct wl1273_core *core,
++				      int rate, int width)
++{
++	struct device *dev = &core->client->dev;
++	int r = 0;
++	u16 mode;
++
++	dev_dbg(dev, "rate: %d\n", rate);
++	dev_dbg(dev, "width: %d\n", width);
++
++	mutex_lock(&core->lock);
++
++	mode = core->i2s_mode & ~WL1273_IS2_WIDTH & ~WL1273_IS2_RATE;
++
++	switch (rate) {
++	case 48000:
++		mode |= WL1273_IS2_RATE_48K;
++		break;
++	case 44100:
++		mode |= WL1273_IS2_RATE_44_1K;
++		break;
++	case 32000:
++		mode |= WL1273_IS2_RATE_32K;
++		break;
++	case 22050:
++		mode |= WL1273_IS2_RATE_22_05K;
++		break;
++	case 16000:
++		mode |= WL1273_IS2_RATE_16K;
++		break;
++	case 12000:
++		mode |= WL1273_IS2_RATE_12K;
++		break;
++	case 11025:
++		mode |= WL1273_IS2_RATE_11_025;
++		break;
++	case 8000:
++		mode |= WL1273_IS2_RATE_8K;
++		break;
++	default:
++		dev_err(dev, "Sampling rate: %d not supported\n", rate);
++		r = -EINVAL;
++		goto out;
++	}
++
++	switch (width) {
++	case 16:
++		mode |= WL1273_IS2_WIDTH_32;
++		break;
++	case 20:
++		mode |= WL1273_IS2_WIDTH_40;
++		break;
++	case 24:
++		mode |= WL1273_IS2_WIDTH_48;
++		break;
++	case 25:
++		mode |= WL1273_IS2_WIDTH_50;
++		break;
++	case 30:
++		mode |= WL1273_IS2_WIDTH_60;
++		break;
++	case 32:
++		mode |= WL1273_IS2_WIDTH_64;
++		break;
++	case 40:
++		mode |= WL1273_IS2_WIDTH_80;
++		break;
++	case 48:
++		mode |= WL1273_IS2_WIDTH_96;
++		break;
++	case 64:
++		mode |= WL1273_IS2_WIDTH_128;
++		break;
++	default:
++		dev_err(dev, "Data width: %d not supported\n", width);
++		r = -EINVAL;
++		goto out;
++	}
++
++	dev_dbg(dev, "core->i2s_mode: 0x%04x, mode: 0x%04x\n",
++		core->i2s_mode, mode);
++
++	if (core->i2s_mode == mode)
++		goto out;
++
++	core->i2s_mode = mode;
++	/*
++	 * While the radio is off the chip is held in reset; the radio
++	 * writes the I2S configuration when it switches the chip on.
++	 */
++	if (wl1273_chip_on(core) && core->audio_mode == WL1273_AUDIO_DIGITAL)
++		r = core->set_audio(core, WL1273_AUDIO_DIGITAL);
++out:
++	mutex_unlock(&core->lock);
++
++	return r;
++}
++
++static int snd_wl1273_fm_set_channel_number(struct wl1273_core *core,
++					    int channel_number)
++{
++	struct device *dev = &core->client->dev;
++	int r = 0;
++
++	dev_dbg(dev, "%s\n", __func__);
++
++	mutex_lock(&core->lock);
++
++	if (core->channel_number == channel_number || !wl1273_chip_on(core))
++		goto out;
++
++	if (channel_number == 1 && core->mode == WL1273_MODE_RX)
++		r = core->write(core, WL1273_MOST_MODE_SET, WL1273_RX_MONO);
++	else if (channel_number == 1 && core->mode == WL1273_MODE_TX)
++		r = core->write(core, WL1273_MONO_SET, WL1273_TX_MONO);
++	else if (channel_number == 2 && core->mode == WL1273_MODE_RX)
++		r = core->write(core, WL1273_MOST_MODE_SET, WL1273_RX_STEREO);
++	else if (channel_number == 2 && core->mode == WL1273_MODE_TX)
++		r = core->write(core, WL1273_MONO_SET, WL1273_TX_STEREO);
++	else
++		r = -EINVAL;
++
++	if (!r)
++		core->channel_number = channel_number;
++out:
++	mutex_unlock(&core->lock);
++
++	return r;
++}
++
++static int snd_wl1273_get_audio_route(struct snd_kcontrol *kcontrol,
++				      struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
++	struct wl1273_priv *wl1273 = snd_soc_component_get_drvdata(component);
++
++	ucontrol->value.enumerated.item[0] = wl1273->mode;
++
++	return 0;
++}
++
++/*
++ * The control only tells the driver which use the interface is set up for
++ * (Bluetooth SCO, FM receiver, FM transmitter); the routing in the chip is
++ * done elsewhere.
++ */
++static int snd_wl1273_set_audio_route(struct snd_kcontrol *kcontrol,
++				      struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
++	struct wl1273_priv *wl1273 = snd_soc_component_get_drvdata(component);
++
++	if (wl1273->mode == ucontrol->value.enumerated.item[0])
++		return 0;
++
++	/* Do not allow changes while stream is running */
++	if (snd_soc_component_active(component))
++		return -EPERM;
++
++	if (ucontrol->value.enumerated.item[0] >= ARRAY_SIZE(wl1273_audio_route))
++		return -EINVAL;
++
++	wl1273->mode = ucontrol->value.enumerated.item[0];
++
++	return 1;
++}
++
++static SOC_ENUM_SINGLE_EXT_DECL(wl1273_enum, wl1273_audio_route);
++
++static int snd_wl1273_fm_audio_get(struct snd_kcontrol *kcontrol,
++				   struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
++	struct wl1273_priv *wl1273 = snd_soc_component_get_drvdata(component);
++
++	ucontrol->value.enumerated.item[0] = wl1273->core->audio_mode;
++
++	return 0;
++}
++
++static int snd_wl1273_fm_audio_put(struct snd_kcontrol *kcontrol,
++				   struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
++	struct wl1273_priv *wl1273 = snd_soc_component_get_drvdata(component);
++	struct wl1273_core *core = wl1273->core;
++	unsigned int val = ucontrol->value.enumerated.item[0];
++	int r;
++
++	if (val > WL1273_AUDIO_ANALOG)
++		return -EINVAL;
++
++	mutex_lock(&core->lock);
++	if (core->audio_mode == val)
++		r = 0;
++	else
++		r = core->set_audio(core, val) ?: 1;
++	mutex_unlock(&core->lock);
++
++	return r;
++}
++
++static const char * const wl1273_audio_strings[] = { "Digital", "Analog" };
++
++static SOC_ENUM_SINGLE_EXT_DECL(wl1273_audio_enum, wl1273_audio_strings);
++
++static int snd_wl1273_fm_volume_get(struct snd_kcontrol *kcontrol,
++				    struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
++	struct wl1273_priv *wl1273 = snd_soc_component_get_drvdata(component);
++
++	ucontrol->value.integer.value[0] = wl1273->core->volume;
++
++	return 0;
++}
++
++static int snd_wl1273_fm_volume_put(struct snd_kcontrol *kcontrol,
++				    struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
++	struct wl1273_priv *wl1273 = snd_soc_component_get_drvdata(component);
++	struct wl1273_core *core = wl1273->core;
++	long val = ucontrol->value.integer.value[0];
++	int r;
++
++	if (val < 0 || val > WL1273_MAX_VOLUME)
++		return -EINVAL;
++
++	if (val == core->volume)
++		return 0;
++
++	mutex_lock(&core->lock);
++	if (wl1273_chip_on(core)) {
++		r = core->set_volume(core, val);
++	} else {
++		/* the radio sets it when it switches the chip on */
++		core->volume = val;
++		r = 0;
++	}
++	mutex_unlock(&core->lock);
++
++	return r ?: 1;
++}
++
++static const struct snd_kcontrol_new wl1273_controls[] = {
++	SOC_ENUM_EXT("Codec Mode", wl1273_enum,
++		     snd_wl1273_get_audio_route, snd_wl1273_set_audio_route),
++	SOC_ENUM_EXT("Audio Switch", wl1273_audio_enum,
++		     snd_wl1273_fm_audio_get,  snd_wl1273_fm_audio_put),
++	SOC_SINGLE_EXT("Volume", 0, 0, WL1273_MAX_VOLUME, 0,
++		       snd_wl1273_fm_volume_get, snd_wl1273_fm_volume_put),
++};
++
++static const struct snd_soc_dapm_widget wl1273_dapm_widgets[] = {
++	SND_SOC_DAPM_INPUT("RX"),
++
++	SND_SOC_DAPM_OUTPUT("TX"),
++};
++
++static const struct snd_soc_dapm_route wl1273_dapm_routes[] = {
++	{ "Capture", NULL, "RX" },
++
++	{ "TX", NULL, "Playback" },
++};
++
++static int wl1273_startup(struct snd_pcm_substream *substream,
++			  struct snd_soc_dai *dai)
++{
++	struct snd_soc_component *component = dai->component;
++	struct wl1273_priv *wl1273 = snd_soc_component_get_drvdata(component);
++
++	switch (wl1273->mode) {
++	case WL1273_MODE_BT:
++		snd_pcm_hw_constraint_single(substream->runtime,
++					     SNDRV_PCM_HW_PARAM_RATE, 8000);
++		snd_pcm_hw_constraint_single(substream->runtime,
++					     SNDRV_PCM_HW_PARAM_CHANNELS, 1);
++		break;
++	case WL1273_MODE_FM_RX:
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++			dev_err(dai->dev, "Cannot play in RX mode.\n");
++			return -EINVAL;
++		}
++		break;
++	case WL1273_MODE_FM_TX:
++		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
++			dev_err(dai->dev, "Cannot capture in TX mode.\n");
++			return -EINVAL;
++		}
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int wl1273_hw_params(struct snd_pcm_substream *substream,
++			    struct snd_pcm_hw_params *params,
++			    struct snd_soc_dai *dai)
++{
++	struct wl1273_priv *wl1273 = snd_soc_component_get_drvdata(dai->component);
++	struct wl1273_core *core = wl1273->core;
++	unsigned int rate, width;
++	int r;
++
++	if (params_width(params) != 16) {
++		dev_err(dai->dev, "%d bits/sample not supported\n",
++			params_width(params));
++		return -EINVAL;
++	}
++
++	rate = params_rate(params);
++	width = hw_param_interval(params, SNDRV_PCM_HW_PARAM_SAMPLE_BITS)->min;
++
++	if (wl1273->mode == WL1273_MODE_BT) {
++		if (rate != 8000) {
++			dev_err(dai->dev, "Rate %d not supported.\n", rate);
++			return -EINVAL;
++		}
++
++		if (params_channels(params) != 1) {
++			dev_err(dai->dev, "Only mono supported.\n");
++			return -EINVAL;
++		}
++
++		return 0;
++	}
++
++	if (wl1273->mode == WL1273_MODE_FM_TX &&
++	    substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
++		dev_err(dai->dev, "Only playback supported with TX.\n");
++		return -EINVAL;
++	}
++
++	if (wl1273->mode == WL1273_MODE_FM_RX &&
++	    substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		dev_err(dai->dev, "Only capture supported with RX.\n");
++		return -EINVAL;
++	}
++
++	if (wl1273->mode != WL1273_MODE_FM_RX &&
++	    wl1273->mode != WL1273_MODE_FM_TX) {
++		dev_err(dai->dev, "Unexpected mode: %d.\n", wl1273->mode);
++		return -EINVAL;
++	}
++
++	r = snd_wl1273_fm_set_i2s_mode(core, rate, width);
++	if (r)
++		return r;
++
++	wl1273->channels = params_channels(params);
++	return snd_wl1273_fm_set_channel_number(core, wl1273->channels);
++}
++
++static const struct snd_soc_dai_ops wl1273_dai_ops = {
++	.startup	= wl1273_startup,
++	.hw_params	= wl1273_hw_params,
++};
++
++static struct snd_soc_dai_driver wl1273_dai = {
++	.name = "wl1273-fm",
++	.playback = {
++		.stream_name = "Playback",
++		.channels_min = 1,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_8000_48000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE},
++	.capture = {
++		.stream_name = "Capture",
++		.channels_min = 1,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_8000_48000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE},
++	.ops = &wl1273_dai_ops,
++};
++
++static const struct snd_soc_component_driver soc_component_dev_wl1273 = {
++	.controls		= wl1273_controls,
++	.num_controls		= ARRAY_SIZE(wl1273_controls),
++	.dapm_widgets		= wl1273_dapm_widgets,
++	.num_dapm_widgets	= ARRAY_SIZE(wl1273_dapm_widgets),
++	.dapm_routes		= wl1273_dapm_routes,
++	.num_dapm_routes	= ARRAY_SIZE(wl1273_dapm_routes),
++	.idle_bias_on		= 1,
++	.use_pmdown_time	= 1,
++	.endianness		= 1,
++};
++
++static int wl1273_platform_probe(struct platform_device *pdev)
++{
++	struct wl1273_core **core = dev_get_platdata(&pdev->dev);
++	struct wl1273_priv *wl1273;
++
++	if (!core || !*core)
++		return dev_err_probe(&pdev->dev, -EINVAL,
++				     "Platform data is missing.\n");
++
++	wl1273 = devm_kzalloc(&pdev->dev, sizeof(*wl1273), GFP_KERNEL);
++	if (!wl1273)
++		return -ENOMEM;
++
++	/* the FM receiver: what a device tree board wires this port for */
++	wl1273->mode = WL1273_MODE_FM_RX;
++	wl1273->core = *core;
++	platform_set_drvdata(pdev, wl1273);
++
++	return devm_snd_soc_register_component(&pdev->dev,
++					       &soc_component_dev_wl1273,
++					       &wl1273_dai, 1);
++}
++
++static const struct of_device_id wl1273_codec_of_match[] = {
++	{ .compatible = "ti,wl1273-codec" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, wl1273_codec_of_match);
++
++static struct platform_driver wl1273_platform_driver = {
++	.driver		= {
++		.name	= "wl1273-codec",
++		.of_match_table = wl1273_codec_of_match,
++	},
++	.probe		= wl1273_platform_probe,
++};
++
++module_platform_driver(wl1273_platform_driver);
++
++MODULE_ALIAS("platform:wl1273-codec");
++MODULE_AUTHOR("Matti Aaltonen <matti.j.aaltonen@nokia.com>");
++MODULE_DESCRIPTION("ASoC WL1273 codec driver");
++MODULE_LICENSE("GPL");
+-- 
+2.56.0
+

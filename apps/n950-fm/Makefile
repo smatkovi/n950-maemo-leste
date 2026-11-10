@@ -9,12 +9,15 @@ LOCALEDIR = $(PREFIX)/share/locale
 PKGS = hildon-1 gtk+-2.0 gthread-2.0
 LANGS = de
 
-all: n950-fm $(LANGS:=.mo)
+all: n950-fm n950-fm-bt $(LANGS:=.mo)
 
 n950-fm: n950-fm.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wall -DLOCALEDIR='"$(LOCALEDIR)"' \
 	    $$($(PKG_CONFIG) --cflags $(PKGS)) -o $@ n950-fm.c \
 	    $(LDFLAGS) $$($(PKG_CONFIG) --libs $(PKGS))
+
+n950-fm-bt: n950-fm-bt.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wall -o $@ n950-fm-bt.c $(LDFLAGS)
 
 %.mo: %.po
 	$(MSGFMT) -o $@ $<
@@ -22,6 +25,7 @@ n950-fm: n950-fm.c
 install: all
 	install -D -m 755 n950-fm $(DESTDIR)$(PREFIX)/bin/n950-fm
 	install -D -m 755 n950-fm-audio $(DESTDIR)$(PREFIX)/bin/n950-fm-audio
+	install -D -m 755 n950-fm-bt $(DESTDIR)$(PREFIX)/libexec/n950-fm-bt
 	install -D -m 755 n950-fm-test $(DESTDIR)$(PREFIX)/bin/n950-fm-test
 	install -D -m 644 n950-fm.default $(DESTDIR)/etc/default/n950-fm
 	install -D -m 644 n950-fm.desktop \
@@ -31,6 +35,6 @@ install: all
 	done
 
 clean:
-	rm -f n950-fm *.mo
+	rm -f n950-fm n950-fm-bt *.mo
 
 .PHONY: all install clean

@@ -1,8 +1,5 @@
-# n950-fm-audio: how the N950's FM sound reaches the speaker or headphones.
+# n950-fm-audio: the N950's FM sound comes from the WL1273's I2S port (the
+# sound card "N950 FM"); a PulseAudio loopback plays it on the default sink.
 #
-# loopback  the TWL5031 records its AUX inputs (stereo), PulseAudio plays
-#           them on its default sink (as Harmattan did)
-# bypass    inside the codecs, without PulseAudio: the TWL5031's analog
-#           loopback to its predrivers (loudspeaker, and the DAC33's line
-#           inputs for the headphones); mono
-FM_AUDIO=loopback
+# FM_LATENCY  the loopback's latency in milliseconds
+FM_LATENCY=100

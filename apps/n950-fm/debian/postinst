@@ -1,0 +1,10 @@
+#!/bin/sh
+# n950-fm-bt sends a Bluetooth vendor command over a raw HCI socket and may
+# switch hci0 on: give it just those two capabilities instead of setuid.
+set -e
+if [ "$1" = configure ]; then
+	setcap cap_net_raw,cap_net_admin+ep /usr/libexec/n950-fm-bt || \
+		echo "n950-fm: setcap failed, n950-fm-bt needs root" >&2
+fi
+#DEBHELPER#
+exit 0

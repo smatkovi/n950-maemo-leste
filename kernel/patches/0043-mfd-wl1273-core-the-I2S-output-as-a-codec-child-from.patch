@@ -1,0 +1,150 @@
+From be60475f1b6a6bbfbbd36859e1ee6c92db0fef9d Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 10 Nov 2026 16:07:26 +0100
+Subject: [PATCH 43/45] mfd: wl1273-core: the I2S output as a codec child from
+ the device tree
+
+The core created its codec cell only from board file platform data, so
+with a device tree the chip's I2S port had no driver and the radio sent
+its sound to the analog output. On the Nokia N950 that output carries
+silence; FM radio apps under Harmattan record FM sound from the chip's
+I2S port on McBSP4.
+
+With a "ti,wl1273-codec" child node, create the codec cell bound to that
+node, so a sound card can name it, and make digital the default audio
+mode; without it everything stays as it was (analog). Setting the audio
+mode while the radio is off no longer fails with -EPERM: the mode is
+stored and the radio applies it when it switches the chip on, so a mixer
+control can set it at any time.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/media/ti,wl1273-fm.yaml          | 26 ++++++++++++++++++-
+ drivers/media/radio/radio-wl1273.c            |  1 -
+ drivers/mfd/wl1273-core.c                     | 19 ++++++++++++--
+ 3 files changed, 42 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/media/ti,wl1273-fm.yaml b/Documentation/devicetree/bindings/media/ti,wl1273-fm.yaml
+index bc84dc574..e698317d0 100644
+--- a/Documentation/devicetree/bindings/media/ti,wl1273-fm.yaml
++++ b/Documentation/devicetree/bindings/media/ti,wl1273-fm.yaml
+@@ -13,7 +13,8 @@ description:
+   The FM part of the WL1273 WiLink combination chip (Wi-Fi, Bluetooth and
+   FM), controlled over I2C. Its interrupt line tells the host about tuning,
+   seek and RDS events; its own reset (enable) line powers the FM part. The
+-  sound leaves the chip as an analog line output or over I2S.
++  sound leaves the chip as an analog line output or over I2S, the I2S port
++  being the "codec" child node.
+ 
+ properties:
+   compatible:
+@@ -31,6 +32,24 @@ properties:
+       The FM part's reset line. While it is asserted the FM part is off; the
+       Nokia N950 and N9 drive it low for that, so they tag it GPIO_ACTIVE_LOW.
+ 
++  codec:
++    type: object
++    additionalProperties: false
++    description:
++      The chip's digital audio interface, the I2S port of a sound card.
++      With this node the radio sends its sound there; without it, to the
++      analog output.
++    properties:
++      compatible:
++        const: ti,wl1273-codec
++
++      "#sound-dai-cells":
++        const: 0
++
++    required:
++      - compatible
++      - "#sound-dai-cells"
++
+ required:
+   - compatible
+   - reg
+@@ -53,5 +72,10 @@ examples:
+             reg = <0x22>;
+             interrupts-extended = <&gpio2 11 IRQ_TYPE_EDGE_FALLING>;
+             reset-gpios = <&gpio6 19 GPIO_ACTIVE_LOW>;
++
++            codec {
++                compatible = "ti,wl1273-codec";
++                #sound-dai-cells = <0>;
++            };
+         };
+     };
+diff --git a/drivers/media/radio/radio-wl1273.c b/drivers/media/radio/radio-wl1273.c
+index 9f438a767..066d0c60e 100644
+--- a/drivers/media/radio/radio-wl1273.c
++++ b/drivers/media/radio/radio-wl1273.c
+@@ -2050,7 +2050,6 @@ static int wl1273_fm_radio_probe(struct platform_device *pdev)
+ 	radio->rds_on = false;
+ 	radio->core->mode = WL1273_MODE_OFF;
+ 	radio->tx_power = 118;
+-	radio->core->audio_mode = WL1273_AUDIO_ANALOG;
+ 	radio->band = WL1273_BAND_OTHER;
+ 	radio->core->i2s_mode = WL1273_I2S_DEF_MODE;
+ 	radio->core->channel_number = 2;
+diff --git a/drivers/mfd/wl1273-core.c b/drivers/mfd/wl1273-core.c
+index 651e97d1d..6dfee0210 100644
+--- a/drivers/mfd/wl1273-core.c
++++ b/drivers/mfd/wl1273-core.c
+@@ -83,9 +83,12 @@ static int wl1273_fm_set_audio(struct wl1273_core *core, unsigned int new_mode)
+ {
+ 	int r = 0;
+ 
++	/* off: the radio applies the mode when it switches the chip on */
+ 	if (core->mode == WL1273_MODE_OFF ||
+-	    core->mode == WL1273_MODE_SUSPENDED)
+-		return -EPERM;
++	    core->mode == WL1273_MODE_SUSPENDED) {
++		core->audio_mode = new_mode;
++		return 0;
++	}
+ 
+ 	if (core->mode == WL1273_MODE_RX && new_mode == WL1273_AUDIO_DIGITAL) {
+ 		r = wl1273_fm_write_cmd(core, WL1273_PCM_MODE_SET,
+@@ -163,6 +166,7 @@ static int wl1273_core_probe(struct i2c_client *client)
+ 	struct wl1273_fm_platform_data *pdata = dev_get_platdata(&client->dev);
+ 	struct wl1273_core *core;
+ 	struct mfd_cell *cell;
++	struct device_node *codec_np;
+ 	int children = 0;
+ 	int r = 0;
+ 
+@@ -177,6 +181,13 @@ static int wl1273_core_probe(struct i2c_client *client)
+ 		if (!pdata)
+ 			return -ENOMEM;
+ 		pdata->children = WL1273_RADIO_CHILD;
++		/* a "codec" child node: the sound leaves over I2S */
++		codec_np = of_get_compatible_child(client->dev.of_node,
++						   "ti,wl1273-codec");
++		if (codec_np) {
++			pdata->children |= WL1273_CODEC_CHILD;
++			of_node_put(codec_np);
++		}
+ 	} else if (!pdata) {
+ 		dev_err(&client->dev, "No platform data.\n");
+ 		return -EINVAL;
+@@ -194,6 +205,9 @@ static int wl1273_core_probe(struct i2c_client *client)
+ 	core->pdata = pdata;
+ 	core->client = client;
+ 	mutex_init(&core->lock);
++	/* with the codec the sound goes over I2S, else to the analog output */
++	core->audio_mode = pdata->children & WL1273_CODEC_CHILD ?
++			   WL1273_AUDIO_DIGITAL : WL1273_AUDIO_ANALOG;
+ 
+ 	if (client->dev.of_node) {
+ 		/* held in reset until the radio is switched on */
+@@ -226,6 +240,7 @@ static int wl1273_core_probe(struct i2c_client *client)
+ 
+ 		dev_dbg(&client->dev, "%s: Have codec.\n", __func__);
+ 		cell->name = "wl1273-codec";
++		cell->of_compatible = "ti,wl1273-codec";
+ 		cell->platform_data = &core;
+ 		cell->pdata_size = sizeof(core);
+ 		children++;
+-- 
+2.56.0
+

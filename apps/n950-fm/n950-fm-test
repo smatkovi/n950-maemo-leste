@@ -10,7 +10,7 @@ Switches the receiver on (VIDIOC_S_TUNER: radio-wl1273 keeps the chip in
 reset until then), prints the frequency, the chip's RSSI level, stereo,
 RDS and the RDS station name and text once a second, and switches the
 receiver off again at the end (a volume of 0) unless -k keeps it on.
-The sound is separate: n950-fm-audio on|off. The headphone cable is the
+The sound is separate: n950-fm-audio on|off (Bluetooth route + loopback). The headphone cable is the
 antenna. Needs radio-wl1273 (kernel/patches 0016-0019).
 """
 import argparse, ctypes, errno, fcntl, os, sys, time
@@ -59,6 +59,9 @@ def ctrl(fd, cid, value):
 def power_on(fd):
     fcntl.ioctl(fd, S_TUNER, Tuner(index=0, audmode=MODE_STEREO,
                                    rxsubchans=SUB_STEREO | SUB_RDS))
+    # the chip's own volume (radio-wl1273 restores the last one, which
+    # power_off() leaves at 1): the level you hear is PulseAudio's
+    ctrl(fd, CID_AUDIO_VOLUME, 0x78b8)
 
 def power_off(fd):
     # radio-wl1273: a volume of 0 puts the chip back into reset; the
