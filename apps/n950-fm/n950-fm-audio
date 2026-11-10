@@ -23,6 +23,7 @@
 # microphones are as they were. Run as the session's user (PulseAudio).
 # Prints the loopback's module number on "on" (0 for bypass).
 set -u
+PATH=$PATH:/usr/sbin:/sbin	# alsactl, for the session user
 
 CARD=${N950_FM_CARD:-N950}
 FM_AUDIO=loopback
@@ -45,6 +46,24 @@ aux_capture() {
 	cset 'Analog Right Sub Mic Capture Switch' off
 	cset 'Analog Left AUXL Capture Switch' on
 	cset 'Analog Right AUXR Capture Switch' on
+}
+
+# With the card's UCM profile, PipeWire offers the FM receiver and the
+# microphone as two profiles of the card (they share the TWL5031's
+# capture); "on" switches to the one with "FM Radio", "off" back.
+pa_card() {
+	pactl list short cards 2>/dev/null |
+		awk '$2 ~ /^alsa_card\./ { print $2; exit }'
+}
+
+pa_profile() {	# active or, with "FM Radio", the FM one
+	if [ "${1:-}" = fm ]; then
+		pactl list cards 2>/dev/null |
+			sed -n 's/^\t\t\(HiFi ([^)]*FM Radio[^)]*)\): .*/\1/p' | head -n 1
+	else
+		pactl list cards 2>/dev/null |
+			sed -n 's/^\tActive Profile: //p' | head -n 1
+	fi
 }
 
 # the first ALSA capture source of PulseAudio: the TWL5031's, as the
@@ -78,6 +97,14 @@ on() {
 		;;
 	*)
 		cset 'TX1 Capture Route' Analog
+		card=$(pa_card)
+		fm=$(pa_profile fm)
+		if [ -n "$card" ] && [ -n "$fm" ]; then
+			pa_profile > "$STATE/profile"
+			pactl set-card-profile "$card" "$fm" ||
+				say "cannot switch $card to $fm"
+			sleep 1
+		fi
 		src=$(pa_source)
 		if [ -z "$src" ]; then
 			say "PulseAudio has no ALSA capture source"
@@ -97,6 +124,9 @@ on() {
 off() {
 	mod=$(cat "$STATE/module" 2>/dev/null)
 	[ -n "$mod" ] && [ "$mod" != 0 ] && pactl unload-module "$mod" 2>/dev/null
+	prof=$(cat "$STATE/profile" 2>/dev/null)
+	card=$(pa_card)
+	[ -n "$prof" ] && [ -n "$card" ] && pactl set-card-profile "$card" "$prof" 2>/dev/null
 	[ -e "$STATE/mixer" ] && alsactl -f "$STATE/mixer" restore "$CARD" 2>/dev/null
 	rm -rf "$STATE"
 	return 0

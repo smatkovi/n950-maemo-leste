@@ -1,0 +1,160 @@
+From 6445ed3446e365e00f4dcc22a14b8a74ebe1fc16 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 10 Nov 2026 16:05:35 +0100
+Subject: [PATCH 42/45] media: radio-wl1273: make the receiver work with the
+ current V4L2 core
+
+The driver had not been used in years and failed in several ways on the
+Nokia N950:
+
+- probe failed with -EINVAL: the pre-emphasis menu's skip mask 0x03
+  skipped the default (50 us) item itself; skip only "disabled".
+- open failed: v4l2-dev now requires a v4l2_fh per open file, and with
+  vfl_dir TX the tuner ioctls returned -ENOTTY. Use v4l2_fh_open() and
+  v4l2_fh_release(), and VFL_DIR_M2M since the device is a receiver and
+  a transmitter.
+- every successful seek returned -ETIMEDOUT: the code checked for the
+  band limit event after the wait and treated its absence, a station
+  found, as a timeout. Check the wait's result for the timeout and
+  return success when the seek stopped on a station.
+- the volume control did not change the volume: it passed core->volume,
+  so set_volume() saw no change. Pass the control's new value.
+- switching the receiver on did not restore the volume: set_volume()
+  skips an unchanged value, but the chip comes out of reset with its
+  own. Write the stored volume directly.
+- reads with RDS off warned on every call, once a second from a poll
+  loop; make that dev_dbg.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/media/radio/radio-wl1273.c | 42 +++++++++++++++++++++++-------
+ 1 file changed, 32 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/media/radio/radio-wl1273.c b/drivers/media/radio/radio-wl1273.c
+index 8f6f4f5a7..9f438a767 100644
+--- a/drivers/media/radio/radio-wl1273.c
++++ b/drivers/media/radio/radio-wl1273.c
+@@ -15,6 +15,7 @@
+ #include <media/v4l2-common.h>
+ #include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
++#include <media/v4l2-fh.h>
+ #include <media/v4l2-ioctl.h>
+ 
+ #define DRIVER_DESC "Wl1273 FM Radio"
+@@ -724,7 +725,11 @@ static int wl1273_fm_set_mode(struct wl1273_device *radio, int mode)
+ 				goto out;
+ 			}
+ 
+-			r = core->set_volume(core, core->volume);
++			/*
++			 * Not set_volume(): it skips an unchanged value, and
++			 * the chip has just come out of reset with its own.
++			 */
++			r = core->write(core, WL1273_VOLUME_SET, core->volume);
+ 			if (r) {
+ 				dev_err(dev, "set volume fails: %d.\n", r);
+ 				goto out;
+@@ -826,12 +831,18 @@ static int wl1273_fm_set_seek(struct wl1273_device *radio,
+ 	if (r)
+ 		goto out;
+ 
+-	/* wait for the FR IRQ */
+-	wait_for_completion_timeout(&radio->busy, msecs_to_jiffies(1000));
+-	if (!(radio->irq_received & WL1273_BL_EVENT)) {
++	/*
++	 * Wait for the FR IRQ. Without the band limit (BL) the seek stopped
++	 * on a station, which the interrupt handler has tuned to already:
++	 * done. This used to return -ETIMEDOUT for exactly that, a found
++	 * station, so every successful seek failed.
++	 */
++	if (!wait_for_completion_timeout(&radio->busy, msecs_to_jiffies(1000))) {
+ 		r = -ETIMEDOUT;
+ 		goto out;
+ 	}
++	if (!(radio->irq_received & WL1273_BL_EVENT))
++		goto out;
+ 
+ 	radio->irq_received &= ~WL1273_BL_EVENT;
+ 
+@@ -1112,12 +1123,19 @@ static int wl1273_fm_fops_open(struct file *file)
+ 
+ 	dev_dbg(radio->dev, "%s\n", __func__);
+ 
++	/* v4l2-dev refuses to open a device whose driver has no v4l2_fh */
++	r = v4l2_fh_open(file);
++	if (r)
++		return r;
++
+ 	if (core->mode == WL1273_MODE_RX && radio->rds_on &&
+ 	    !radio->rds_users) {
+ 		dev_dbg(radio->dev, "%s: Mode: %d\n", __func__, core->mode);
+ 
+-		if (mutex_lock_interruptible(&core->lock))
++		if (mutex_lock_interruptible(&core->lock)) {
++			v4l2_fh_release(file);
+ 			return -EINTR;
++		}
+ 
+ 		radio->irq_flags |= WL1273_RDS_EVENT;
+ 
+@@ -1133,6 +1151,8 @@ static int wl1273_fm_fops_open(struct file *file)
+ 		mutex_unlock(&core->lock);
+ 	}
+ out:
++	if (r)
++		v4l2_fh_release(file);
+ 	return r;
+ }
+ 
+@@ -1167,6 +1187,7 @@ static int wl1273_fm_fops_release(struct file *file)
+ 	if (file == radio->owner)
+ 		radio->owner = NULL;
+ out:
++	v4l2_fh_release(file);
+ 	return r;
+ }
+ 
+@@ -1184,8 +1205,9 @@ static ssize_t wl1273_fm_fops_read(struct file *file, char __user *buf,
+ 	if (core->mode != WL1273_MODE_RX)
+ 		return 0;
+ 
++	/* a poll loop reads this every second; not worth a warning each */
+ 	if (radio->rds_users == 0) {
+-		dev_warn(radio->dev, "%s: RDS not on.\n", __func__);
++		dev_dbg(radio->dev, "%s: RDS not on.\n", __func__);
+ 		return 0;
+ 	}
+ 
+@@ -1438,8 +1460,8 @@ static int wl1273_fm_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_AUDIO_VOLUME:
+ 		if (ctrl->val == 0)
+ 			r = wl1273_fm_set_mode(radio, WL1273_MODE_OFF);
+-		else
+-			r =  core->set_volume(core, core->volume);
++		else	/* the new value: core->volume was set_volume()'s no-op */
++			r = core->set_volume(core, ctrl->val);
+ 		break;
+ 
+ 	case V4L2_CID_TUNE_PREEMPHASIS:
+@@ -1969,7 +1991,7 @@ static const struct video_device wl1273_viddev_template = {
+ 	.ioctl_ops		= &wl1273_ioctl_ops,
+ 	.name			= WL1273_FM_DRIVER_NAME,
+ 	.release		= wl1273_vdev_release,
+-	.vfl_dir		= VFL_DIR_TX,
++	.vfl_dir		= VFL_DIR_M2M,	/* receiver and transmitter */
+ 	.device_caps		= V4L2_CAP_HW_FREQ_SEEK | V4L2_CAP_TUNER |
+ 				  V4L2_CAP_RADIO | V4L2_CAP_AUDIO |
+ 				  V4L2_CAP_RDS_CAPTURE | V4L2_CAP_MODULATOR |
+@@ -2104,7 +2126,7 @@ static int wl1273_fm_radio_probe(struct platform_device *pdev)
+ 
+ 	v4l2_ctrl_new_std_menu(&radio->ctrl_handler, &wl1273_ctrl_ops,
+ 			       V4L2_CID_TUNE_PREEMPHASIS,
+-			       V4L2_PREEMPHASIS_75_uS, 0x03,
++			       V4L2_PREEMPHASIS_75_uS, 0x01,
+ 			       V4L2_PREEMPHASIS_50_uS);
+ 
+ 	v4l2_ctrl_new_std(&radio->ctrl_handler, &wl1273_ctrl_ops,
+-- 
+2.56.0
+
