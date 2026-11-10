@@ -1,0 +1,211 @@
+From be373e5c29350e342d1cc21562466b8a7f23f805 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 10 Nov 2026 12:15:31 +0100
+Subject: [PATCH] power: supply: bq27xxx: OCV based state of charge for gauges
+ without one
+
+The bq27521 that the Nokia N950 and N9 use measures voltage, current and
+temperature, but its state of charge and capacity registers hold
+placeholders (100, 0xffff, -1000) unless configured the way Harmattan's
+battery daemon did; that daemon kept the books itself. So the driver gave
+no capacity, upower reported 0 % and Leste showed "battery low" on a
+battery at 4.1 V.
+
+For chips without a state of charge register, take the monitored-battery's
+OCV table if the board gives one: open circuit voltage = measured voltage
+minus current times the cell's internal resistance (ocv_resistance_mohm,
+500 by default; the N950's steps of the charge current suggest some 0.7
+Ohm near empty), mapped through the table and smoothed, with readings near
+rest weighted higher and the filter seeded from the first reading so a
+boot never starts at 0 %. CAPACITY_LEVEL follows the same number.
+
+The N950's device tree gets a 4.20 V Li-ion table (taken from
+msm8916-gplus-fl8005a): 100 % is what the phone can charge to, since the
+boot loader locks the charger at 4.20 V for both of its batteries.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 27 ++++++++
+ drivers/power/supply/bq27xxx_battery.c   | 78 +++++++++++++++++++++++-
+ include/linux/power/bq27xxx_battery.h    |  3 +
+ 3 files changed, 106 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index d2bd271b0..9c7993f30 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -16,6 +16,32 @@ / {
+ 	model = "Nokia N950";
+ 	compatible = "nokia,omap3-n950", "ti,omap3630", "ti,omap3";
+ 
++	/*
++	 * The battery as the fuel gauge sees it. The bq27521 measures voltage
++	 * and current but gives no state of charge (Harmattan's bme computed
++	 * it), so the driver estimates it from this OCV table. 100 % is what
++	 * the phone charges to: the boot loader locks the charger's limit at
++	 * 4.20 V for either battery (BL-4D 3.7 V, BV-4D 3.8 V), so a 4.20 V
++	 * Li-ion table (from msm8916-gplus-fl8005a) for both.
++	 */
++	battery: battery {
++		compatible = "simple-battery";
++		device-chemistry = "lithium-ion";
++		voltage-max-design-microvolt = <4200000>;
++		ocv-capacity-celsius = <25>;
++		ocv-capacity-table-0 =
++			<4186000 100>, <4126000 95>, <4078000 90>,
++			<4036000 85>, <3997000 80>, <3962000 75>,
++			<3932000 70>, <3904000 65>, <3874000 60>,
++			<3839000 55>, <3809000 50>, <3792000 45>,
++			<3780000 40>, <3772000 35>, <3764000 30>,
++			<3752000 25>, <3731000 20>, <3704000 16>,
++			<3677000 13>, <3670000 11>, <3668000 10>,
++			<3666000 9>, <3662000 8>, <3658000 7>, <3648000 6>,
++			<3624000 5>, <3580000 4>, <3518000 3>, <3434000 2>,
++			<3310000 1>, <3000000 0>;
++	};
++
+ 	/* the battery, which some parts are fed from directly */
+ 	vbat: regulator-vbat {
+ 		compatible = "regulator-fixed";
+@@ -445,6 +471,7 @@ fuel-gauge@55 {
+ 		compatible = "ti,bq27521";
+ 		reg = <0x55>;
+ 		power-supplies = <&bq24153a>;
++		monitored-battery = <&battery>;
+ 	};
+ };
+ 
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index 45f0e39b8..6392c4de4 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -720,6 +720,8 @@ static enum power_supply_property bq27521_props[] = {
+ 	POWER_SUPPLY_PROP_PRESENT,
+ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+ 	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_CAPACITY,		/* only with an OCV table */
++	POWER_SUPPLY_PROP_CAPACITY_LEVEL,	/* likewise */
+ 	POWER_SUPPLY_PROP_TEMP,
+ 	POWER_SUPPLY_PROP_TECHNOLOGY,
+ };
+@@ -1912,6 +1914,50 @@ static int bq27xxx_battery_current_and_status(
+ 	return 0;
+ }
+ 
++/*
++ * Some gauges (the bq27521 as the Nokia N950 and N9 use it) give voltage
++ * and current but no state of charge: on those phones Harmattan's battery
++ * daemon kept the books. With a monitored-battery that has an OCV table,
++ * estimate the charge from the open circuit voltage instead, taking the
++ * cell's internal resistance off the measured voltage, and smooth it: one
++ * reading under load is off by tens of percent.
++ */
++static unsigned int ocv_resistance_mohm = 500;
++module_param(ocv_resistance_mohm, uint, 0644);
++MODULE_PARM_DESC(ocv_resistance_mohm,
++	"battery internal resistance in mOhm for the OCV based state of charge");
++
++static int bq27xxx_battery_ocv_capacity(struct bq27xxx_device_info *di)
++{
++	int volt, curr, ocv, cap, weight;
++
++	volt = bq27xxx_read(di, BQ27XXX_REG_VOLT, false);
++	curr = bq27xxx_read(di, BQ27XXX_REG_AI, false);
++	if (volt < 0 || curr < 0)
++		return di->ocv_capacity < 0 ? -ENODATA : di->ocv_capacity / 100;
++	curr = (s16)curr;			/* mA, positive while charging */
++
++	/* mV * 1000 = uV; mA * mOhm = uV */
++	ocv = volt * 1000 - curr * (int)ocv_resistance_mohm;
++	cap = power_supply_batinfo_ocv2cap(di->ocv_info, ocv, 25);
++	if (cap < 0)
++		return di->ocv_capacity < 0 ? cap : di->ocv_capacity / 100;
++
++	/* trust readings near rest more; start from the first one */
++	if (abs(curr) < 50)
++		weight = 500;
++	else if (abs(curr) < 200)
++		weight = 250;
++	else
++		weight = 100;
++	if (di->ocv_capacity < 0)
++		di->ocv_capacity = cap * 100;
++	else
++		di->ocv_capacity += (cap * 100 - di->ocv_capacity) * weight / 1000;
++
++	return clamp(DIV_ROUND_CLOSEST(di->ocv_capacity, 100), 0, 100);
++}
++
+ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
+ {
+ 	union power_supply_propval status = di->last_status;
+@@ -1922,7 +1968,10 @@ static void bq27xxx_battery_update_unlocked(struct bq27xxx_device_info *di)
+ 	if (di->chip == BQ27000 && (cache.flags & 0xff) == 0xff)
+ 		cache.flags = -ENODEV; /* bq27000 hdq read error */
+ 	if (cache.flags >= 0) {
+-		cache.capacity = bq27xxx_battery_read_soc(di);
++		if (di->ocv_info)
++			cache.capacity = bq27xxx_battery_ocv_capacity(di);
++		else
++			cache.capacity = bq27xxx_battery_read_soc(di);
+ 
+ 		/*
+ 		 * On gauges with signed current reporting the current must be
+@@ -1996,7 +2045,19 @@ static int bq27xxx_battery_capacity_level(struct bq27xxx_device_info *di,
+ {
+ 	int level;
+ 
+-	if (di->opts & BQ27XXX_O_ZERO) {
++	if (di->ocv_info) {
++		/* the flags of such a gauge say nothing; follow the estimate */
++		if (di->cache.capacity < 0)
++			return di->cache.capacity;
++		if (di->cache.capacity >= 100)
++			level = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
++		else if (di->cache.capacity <= 3)
++			level = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
++		else if (di->cache.capacity <= 10)
++			level = POWER_SUPPLY_CAPACITY_LEVEL_LOW;
++		else
++			level = POWER_SUPPLY_CAPACITY_LEVEL_NORMAL;
++	} else if (di->opts & BQ27XXX_O_ZERO) {
+ 		if (di->cache.flags & BQ27000_FLAG_FC)
+ 			level = POWER_SUPPLY_CAPACITY_LEVEL_FULL;
+ 		else if (di->cache.flags & BQ27000_FLAG_EDVF)
+@@ -2260,6 +2321,19 @@ int bq27xxx_battery_setup(struct bq27xxx_device_info *di)
+ 		return dev_err_probe(di->dev, PTR_ERR(di->bat),
+ 				     "failed to register battery\n");
+ 
++	di->ocv_capacity = -1;
++	if (di->regs[BQ27XXX_REG_SOC] == INVALID_REG_ADDR) {
++		struct power_supply_battery_info *info;
++
++		/* devm on the power supply: keeping the pointer is fine */
++		if (!power_supply_get_battery_info(di->bat, &info) &&
++		    info->ocv_table_size[0] > 0) {
++			di->ocv_info = info;
++			dev_info(di->dev, "no state of charge register: estimating it from the OCV (R %u mOhm)\n",
++				 ocv_resistance_mohm);
++		}
++	}
++
+ 	bq27xxx_battery_settings(di);
+ 	bq27xxx_battery_update(di);
+ 
+diff --git a/include/linux/power/bq27xxx_battery.h b/include/linux/power/bq27xxx_battery.h
+index d56e1276a..94e54416d 100644
+--- a/include/linux/power/bq27xxx_battery.h
++++ b/include/linux/power/bq27xxx_battery.h
+@@ -71,6 +71,9 @@ struct bq27xxx_device_info {
+ 	struct list_head list;
+ 	struct mutex lock;
+ 	u8 *regs;
++	/* gauges without a state of charge register: estimate it from the OCV */
++	struct power_supply_battery_info *ocv_info;
++	int ocv_capacity;	/* filtered estimate in 1/100 %, -1 = none yet */
+ };
+ 
+ void bq27xxx_battery_update(struct bq27xxx_device_info *di);
+-- 
+2.56.0
+
