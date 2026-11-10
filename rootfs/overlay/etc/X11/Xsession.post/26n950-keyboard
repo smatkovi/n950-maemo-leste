@@ -12,7 +12,13 @@ xkb_keymap {
 	xkb_keycodes { include "evdev+aliases(qwerty)" };
 	xkb_types { include "complete+nokia" };
 	xkb_compat { include "complete" };
-	xkb_symbols { include "nokia_vndr/rm-680(common)+nokia_vndr/rm-680($l)" };
+	xkb_symbols {
+		include "nokia_vndr/rm-680(common)+nokia_vndr/rm-680($l)"
+		// the side keys: the volume applet tells them apart by
+		// these keysyms, without them both read as "louder"
+		key <VOL-> { [ XF86AudioLowerVolume ] };
+		key <VOL+> { [ XF86AudioRaiseVolume ] };
+	};
 	xkb_geometry { include "pc(pc105)" };
 };
 EOF
