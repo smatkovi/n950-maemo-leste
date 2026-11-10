@@ -1,0 +1,142 @@
+From 3da72d8ff57215070d182a36149a84e42b4febc6 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Tue, 10 Nov 2026 09:47:42 +0100
+Subject: [PATCH 37/38] power: supply: twl5031_bcc: kick the BCC charger
+ watchdog while VBUS is in
+
+The N950 never charged under this driver: the bq24153a sat in "ready" with
+no fault while the battery drained on a connected cable. A ptrace of
+Harmattan's bme on an N9 (its i2c-dev traffic while a charger is plugged)
+shows why: next to the bq24153a set-up, bme sets bit 1 of BCC register
+0x00 (CTRL1, 0xAA on slave 2) every 10 s - a self-clearing kick that
+Nokia's kernel driver never did. On the N950 one such write released the
+bq24153a's CD pin at once (reg 5 CD_STATUS 1 -> 0, status "charging",
++180 mA into the battery); 10-20 s after the last kick the BCC raised CD
+again and charging stopped.
+
+Kick it every 5 s while the charge path is online, as bme does.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/power/supply/twl5031_bcc.c | 45 ++++++++++++++++++++++++++++--
+ 1 file changed, 42 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/twl5031_bcc.c b/drivers/power/supply/twl5031_bcc.c
+index eb1e363fd..00a190b19 100644
+--- a/drivers/power/supply/twl5031_bcc.c
++++ b/drivers/power/supply/twl5031_bcc.c
+@@ -11,6 +11,9 @@
+  * on a connected cable. Harmattan does all this in user space (bme); this
+  * driver does it in the kernel, after Nokia's drivers/power/twl5031-bcc.c
+  * for Linux 2.6.32 (Aliaksei Katovich, Nokia Corporation, GPL v2).
++ * bme also kicks a charger watchdog in the BCC every 10 s, which Nokia's
++ * driver never did; without it the BCC disables the charger through its CD
++ * pin within seconds. This driver kicks it while VBUS is there.
+  *
+  * The result is published as a USB power supply with CURRENT_MAX, so the
+  * bq2415x driver can follow it through ti,usb-charger-detection the same
+@@ -39,6 +42,15 @@
+ #include <linux/workqueue.h>
+ 
+ /* registers, relative to TWL5031_MODULE_BCC (0xAA on slave 2) */
++#define BCC_CTRL1			0x00
++/*
++ * Charger watchdog kick, self-clearing (reads back 0). Not in Nokia's
++ * driver: bme sets it every 10 s while a cable is in (seen on an N9 with a
++ * ptrace of bme's i2c-dev traffic). Without it the BCC raises the
++ * bq24153a's CD pin some 10-20 s after the last kick and the charger stops
++ * (bq24153a reg 5 CD_STATUS 1, status "ready", no fault).
++ */
++#define  BCC_CTRL1_WDT_KICK		BIT(1)
+ #define BCC_CTRL2			0x01
+ #define  BCC_CHGMODE_SW			BIT(0)	/* software controls the charge path */
+ #define  BCC_SW_USBCHRG_EN		BIT(1)	/* VBUS -> external charger */
+@@ -62,11 +74,11 @@
+ #define BCC_DETECT_TIMEOUT_MS		300
+ #define BCC_USB_CURRENT_MA		500	/* what we offer the charger driver */
+ #define BCC_REARM_MS			8000	/* switch open time to give the charger a VBUS edge */
++#define BCC_KICK_MS			5000	/* bme kicks every 10 s; the watchdog bites at 10-20 s */
+ 
+ /*
+- * Knobs for finding out what keeps the path alive (2026-11-09: with the
+- * detection's 100 mA result the path dropped VBUS 30-600 s into charging,
+- * after load spikes - an input current limit of the TWL5031, presumably).
++ * Knobs from the hunt for what stopped charging (the missing watchdog kick,
++ * see BCC_CTRL1_WDT_KICK); kept for experiments.
+  */
+ static bool force_chrg_det = true;
+ module_param(force_chrg_det, bool, 0644);
+@@ -82,6 +94,7 @@ struct twl5031_bcc {
+ 	struct device		*dev;
+ 	struct mutex		lock;
+ 	struct work_struct	work;
++	struct delayed_work	kick;
+ 	struct usb_phy		*phy;
+ 	struct notifier_block	nb;
+ 	struct regulator	*usb3v1;
+@@ -190,6 +203,23 @@ static int twl5031_bcc_connect(struct twl5031_bcc *bcc)
+ 	return ret < 0 ? ret : det;
+ }
+ 
++/* keep the BCC's charger watchdog from disabling the charger, as bme does */
++static void twl5031_bcc_kick_work(struct work_struct *work)
++{
++	struct twl5031_bcc *bcc = container_of(to_delayed_work(work),
++					       struct twl5031_bcc, kick);
++	int ctl1;
++
++	mutex_lock(&bcc->lock);
++	if (bcc->online) {
++		ctl1 = bcc_read(bcc, BCC_CTRL1);
++		if (ctl1 >= 0)
++			bcc_write(bcc, BCC_CTRL1, ctl1 | BCC_CTRL1_WDT_KICK);
++		schedule_delayed_work(&bcc->kick, msecs_to_jiffies(BCC_KICK_MS));
++	}
++	mutex_unlock(&bcc->lock);
++}
++
+ static int twl5031_bcc_disconnect(struct twl5031_bcc *bcc)
+ {
+ 	int ctl = bcc_read(bcc, BCC_CTRL2);
+@@ -238,6 +268,11 @@ static void twl5031_bcc_work(struct work_struct *work)
+ 	if (online != bcc->online) {
+ 		bcc->online = online;
+ 		bcc->current_ma = online ? BCC_USB_CURRENT_MA : 0;
++		/* the kick work takes the lock and checks online: no _sync here */
++		if (online)
++			mod_delayed_work(system_wq, &bcc->kick, 0);
++		else
++			cancel_delayed_work(&bcc->kick);
+ 		mutex_unlock(&bcc->lock);
+ 		power_supply_changed(bcc->usb);
+ 		return;
+@@ -316,6 +351,7 @@ static ssize_t reconnect_store(struct device *dev, struct device_attribute *attr
+ 		bcc->detected = ret;
+ 		bcc->online = true;
+ 		bcc->current_ma = BCC_USB_CURRENT_MA;
++		mod_delayed_work(system_wq, &bcc->kick, 0);
+ 	}
+ 	mutex_unlock(&bcc->lock);
+ 	power_supply_changed(bcc->usb);
+@@ -338,6 +374,7 @@ static int twl5031_bcc_probe(struct platform_device *pdev)
+ 	bcc->dev = &pdev->dev;
+ 	mutex_init(&bcc->lock);
+ 	INIT_WORK(&bcc->work, twl5031_bcc_work);
++	INIT_DELAYED_WORK(&bcc->kick, twl5031_bcc_kick_work);
+ 	platform_set_drvdata(pdev, bcc);
+ 
+ 	bcc->phy = devm_usb_get_phy_by_phandle(&pdev->dev, "usb-phy", 0);
+@@ -387,8 +424,10 @@ static void twl5031_bcc_remove(struct platform_device *pdev)
+ 	device_remove_file(&pdev->dev, &dev_attr_reconnect);
+ 	device_remove_file(&pdev->dev, &dev_attr_registers);
+ 	mutex_lock(&bcc->lock);
++	bcc->online = false;		/* stops the kick work rescheduling itself */
+ 	twl5031_bcc_disconnect(bcc);
+ 	mutex_unlock(&bcc->lock);
++	cancel_delayed_work_sync(&bcc->kick);
+ }
+ 
+ static const struct of_device_id twl5031_bcc_of_match[] = {
+-- 
+2.56.0
+
