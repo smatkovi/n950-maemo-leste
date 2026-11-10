@@ -1,0 +1,26 @@
+
+# --- N950 additions (n950-maemo-leste) ---
+# A wall charger (USB_DCP) does not count as "cable in" for the maintenance
+# mode, so plugging the battery in on a charger boots the default OS
+# instead of exporting the partitions. Builtins only.
+usb_is_plugged()
+{
+  usb=0
+  [ -r /sys/class/power_supply/usb/present ] && read usb < /sys/class/power_supply/usb/present
+  if [ "$usb" = "1" ] && [ -r /sys/class/power_supply/usb/type ]; then
+    read n950_usb_type < /sys/class/power_supply/usb/type
+    [ "$n950_usb_type" = "USB_DCP" ] && usb=0
+  fi
+  return $usb
+}
+# The bq24153's safety limit register (6) takes a write only until another
+# register has been written since its power-on reset; its VMREG caps the
+# charge voltage (power-on 4.20 V). Write 4.34 V for a 3.8 V battery as
+# early as possible; Leste still picks 4.20 V or 4.34 V by BSI below that
+# ceiling. Only while preinit sources this file ($mpart set), once.
+if [ -z "$N950_BQ_DONE" ] && [ -n "$mpart" ] && [ -r "/mnt/$mpart/boot/i2crw" ]; then
+  N950_BQ_DONE=1
+  cp "/mnt/$mpart/boot/i2crw" /tmp/i2crw && chmod 755 /tmp/i2crw
+  logger "n950 bq24153 at $(cut -d' ' -f1 /proc/uptime) s: $(/tmp/i2crw 2 6b 06 2>&1)"
+  logger "n950 bq24153 safety limit <- 47: $(/tmp/i2crw 2 6b 06 47 2>&1)"
+fi
