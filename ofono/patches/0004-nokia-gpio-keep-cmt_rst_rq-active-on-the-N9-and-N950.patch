@@ -1,0 +1,80 @@
+Description: nokia-gpio: keep cmt_rst_rq active on the Nokia N9 and N950
+ The N900's modem wants cmt_rst_rq lowered once the phonet link is up. The
+ modem of the N9 and N950 resets itself a few seconds after that, over and
+ over; Harmattan keeps the line active (init_active on its command line).
+ Recognise these boards by their device tree and never drive it inactive.
+Author: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Forwarded: no
+Last-Update: 2026-11-10
+---
+diff --git a/plugins/nokia-gpio.c b/plugins/nokia-gpio.c
+index b43aedf..40060ae 100644
+--- a/plugins/nokia-gpio.c
++++ b/plugins/nokia-gpio.c
+@@ -78,6 +78,7 @@ struct gpio_data {
+ 	unsigned have_cmt_rst:1;
+ 	unsigned have_cmt_bsi:1;
+ 	unsigned have_cmt_apeslpx:1;
++	unsigned hold_cmt_rst_rq:1;
+ 	unsigned reset_in_progress:1;
+ 	unsigned startup_in_progress:1;
+ };
+@@ -148,6 +149,17 @@ static int gpio_write(char *line, int value)
+ {
+ 	char filename[256];
+ 
++	/*
++	 * The modem of the Nokia N9 and N950 resets itself a few seconds
++	 * after cmt_rst_rq goes inactive, which the N900's modem wants once
++	 * the link is up. Harmattan keeps it active (gpio=cmt_rst_rq:...:
++	 * init_active on the kernel command line); do the same there.
++	 */
++	if (self.hold_cmt_rst_rq && !value && !strcmp(line, "cmt_rst_rq")) {
++		DBG("(\"%s\", \"inactive\") skipped, held active", line);
++		return 0;
++	}
++
+ 	DBG("(\"%s\", \"%s\")", line, value ? "active" : "inactive");
+ 
+ 	if (self.have_gpio_switch) {
+@@ -164,6 +176,27 @@ static int gpio_write(char *line, int value)
+ #define GPIO_WRITE(line, value) \
+ 	(self.have_ ## line ? gpio_write(#line, value) : 0)
+ 
++/* the board from the device tree: "nokia,omap3-n950", "nokia,omap3-n9" */
++static gboolean board_is_n9_or_n950(void)
++{
++	gchar *buf = NULL;
++	gsize len = 0, i;
++	gboolean found = FALSE;
++
++	if (!g_file_get_contents("/proc/device-tree/compatible", &buf, &len,
++					NULL))
++		return FALSE;
++
++	for (i = 0; i < len; i += strlen(buf + i) + 1) {
++		if (!strcmp(buf + i, "nokia,omap3-n950") ||
++				!strcmp(buf + i, "nokia,omap3-n9"))
++			found = TRUE;
++	}
++
++	g_free(buf);
++	return found;
++}
++
+ static int gpio_line_probe(char const *line)
+ {
+ 	char filename[256];
+@@ -669,6 +702,12 @@ int gpio_probe(GIsiModem *idx, unsigned addr, gpio_finished_cb_t cb, void *data)
+ 	else
+ 		self.rapu = RAPU_TYPE_2;
+ 
++	self.hold_cmt_rst_rq = self.have_cmt_rst_rq && board_is_n9_or_n950();
++	if (self.hold_cmt_rst_rq) {
++		DBG("Nokia N9/N950: keeping cmt_rst_rq active");
++		gpio_write("cmt_rst_rq", 1);
++	}
++
+ 	self.link = g_isi_pn_netlink_start(idx, phonet_status_cb, NULL);
+ 	if (self.link == NULL) {
+ 		memset(&self, 0, sizeof self);

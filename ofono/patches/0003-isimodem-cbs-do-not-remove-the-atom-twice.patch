@@ -1,0 +1,39 @@
+Description: isimodem/cbs: do not remove the atom twice
+ isi_cbs_remove() clears the driver data and then destroys the ISI client,
+ which completes the pending routing request with an error; its callback
+ then called ofono_cbs_remove() on the atom being removed, a double free.
+ ofonod crashed (SIGSEGV) every time the modem reset while online.
+Author: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Forwarded: no
+Last-Update: 2026-11-10
+---
+diff --git a/drivers/isimodem/cbs.c b/drivers/isimodem/cbs.c
+index 8b4927f..f6a1d7f 100644
+--- a/drivers/isimodem/cbs.c
++++ b/drivers/isimodem/cbs.c
+@@ -117,6 +117,15 @@ static void routing_resp_cb(const GIsiMessage *msg, void *data)
+ 	struct ofono_cbs *cbs = data;
+ 	struct cbs_data *cd = ofono_cbs_get_data(cbs);
+ 
++	/*
++	 * isi_cbs_remove() clears the data, then destroys the client, which
++	 * fails this pending request: the atom is being removed already, so
++	 * removing it here again freed it twice (ofonod crashed whenever the
++	 * modem reset while online).
++	 */
++	if (cd == NULL)
++		return;
++
+ 	if (!check_resp(msg, SMS_GSM_CB_ROUTING_RESP)) {
+ 		ofono_cbs_remove(cbs);
+ 		return;
+@@ -146,6 +155,9 @@ static void cbs_reachable_cb(const GIsiMessage *msg, void *data)
+ 		0x00   /* Languages */
+ 	};
+ 
++	if (cd == NULL)		/* being removed, see routing_resp_cb() */
++		return;
++
+ 	if (g_isi_msg_error(msg) < 0) {
+ 		DBG("Unable to find CBS resource");
+ 		ofono_cbs_remove(cbs);
