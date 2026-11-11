@@ -8,12 +8,16 @@
 # /boot/cmdline is not touched.
 #
 #   WORK=~/ps/n950-kernel bash kernel/deploy-ssh.sh [root@host]
+#
+# SSH_OPTS adds ssh options, e.g. over Wi-Fi with the USB address's host key:
+#   SSH_OPTS="-o HostKeyAlias=192.168.42.2" ... deploy-ssh.sh root@<wlan ip>
 set -euo pipefail
 WORK=${WORK:?set WORK=<work directory used for build.sh>}
 O=$WORK/out
 T=${1:-root@192.168.42.2}
 KH=${KNOWN_HOSTS:-$HOME/.ssh/known_hosts.n950-leste}
-SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o UserKnownHostsFile="$KH" "$T")
+read -r -a XOPT <<< "${SSH_OPTS:-}"
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o UserKnownHostsFile="$KH" "${XOPT[@]}" "$T")
 REL=$(cat "$O/include/config/kernel.release")
 B=$O/arch/arm/boot
 STAGE=$O/stage-$REL
@@ -25,7 +29,7 @@ make -C "$WORK/linux" O="$O" ARCH=arm LLVM=1 CC="ccache clang" -s \
      INSTALL_MOD_PATH="$STAGE" INSTALL_MOD_STRIP=1 modules_install
 echo "== $(find "$STAGE" -name '*.ko' | wc -l) modules staged, zImage $(stat -c %s "$O/zImage-$REL") bytes"
 echo "== copying to $T"
-scp -q -o BatchMode=yes -o UserKnownHostsFile="$KH" "$O/zImage-$REL" "$T:/boot/zImage-$REL"
+scp -q -o BatchMode=yes -o UserKnownHostsFile="$KH" "${XOPT[@]}" "$O/zImage-$REL" "$T:/boot/zImage-$REL"
 tar -C "$STAGE/lib/modules" -cf - "$REL" | "${SSH[@]}" "tar -C /lib/modules -xf - && depmod $REL && echo modules installed"
 "${SSH[@]}" "set -e; cd /boot
 md5sum zImage-$REL | cut -c1-12
