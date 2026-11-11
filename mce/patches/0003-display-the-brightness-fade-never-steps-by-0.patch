@@ -1,0 +1,36 @@
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Subject: [PATCH] display: the brightness fade never steps by 0
+
+update_brightness_fade() divides the distance to the new brightness by
+the number of fade steps, rounding up. With the display already at the
+new brightness (cached_brightness equal to it, target_brightness still
+pointing elsewhere), the step is (0 + max_steps - 1) / max_steps = 0. The
+timeout
+then never gets "closer than one step" (|0| < 0 is false), moves by 0,
+writes the same brightness again and repeats, every 10 ms for ever.
+
+On the Nokia N950 that was some 30 to 50 backlight writes a second,
+each one a change uevent handled by udev: two udevd workers on top of
+the CPU list, a load average of 8 to 23 for as long as the phone ran,
+lagging sounds, a slow lock screen. A step of at least 1 ends such a
+fade after its one write.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+--- a/src/modules/display.c	2026-11-11 09:46:20.834832650 +0100
++++ b/src/modules/display.c	2026-11-11 09:46:20.848284356 +0100
+@@ -194,6 +194,14 @@
+ 	const gint max_steps = brightness_fade_duration / step_time;
+ 	const gint brightness_diff = abs(target_brightness - cached_brightness);
+ 	brightness_fade_steplength = (brightness_diff + max_steps - 1) / max_steps;
++	/*
++	 * At least 1: when the display already is at the new brightness (no
++	 * difference), a step of 0 never gets "closer than one step" in the
++	 * timeout, which then wrote the same value every step_time for ever
++	 * (each write a backlight uevent, all of them through udev).
++	 */
++	if (brightness_fade_steplength < 1)
++		brightness_fade_steplength = 1;
+ 
+ 	setup_brightness_fade_timeout(step_time);
+ 
