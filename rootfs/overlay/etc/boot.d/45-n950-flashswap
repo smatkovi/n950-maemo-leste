@@ -1,0 +1,26 @@
+#!/bin/sh
+# Flash swap on OneNAND's var partition, behind zram (priority 10 against
+# 100), as Harmattan does it: mtdswap for wear levelling, markerless like
+# Nokia's mtdswap (this OneNAND cannot program a page's OOB and its data
+# separately, so OOB markers would turn data writes into ECC errors), and
+# dm-crypt with a random key per boot, so nothing swapped out outlives it.
+# var holds nothing else: MeeGo uses it the same way.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+[ -e /dev/mapper/flashswap ] && exit 0
+part=$(sed -n 's/^mtd\([0-9]*\): .* "var"$/\1/p' /proc/mtd)
+[ -n "$part" ] || exit 0
+modprobe mtdswap partitions="$part" spare_eblocks=10 header=0 markerless=1 || exit 0
+dev=/dev/mtdswap$part
+for i in 1 2 3 4 5; do
+	[ -b "$dev" ] && break
+	sleep 1
+done
+[ -b "$dev" ] || exit 0
+modprobe dm_crypt 2>/dev/null
+sectors=$(blockdev --getsz "$dev") || exit 0
+key=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+echo "0 $sectors crypt aes-cbc-essiv:sha256 $key 0 $dev 0" |
+	dmsetup create flashswap || exit 0
+mkswap /dev/mapper/flashswap >/dev/null 2>&1 &&
+	swapon -p 10 /dev/mapper/flashswap
+exit 0

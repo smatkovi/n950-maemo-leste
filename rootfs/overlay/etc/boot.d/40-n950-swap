@@ -2,8 +2,7 @@
 # Compressed swap in RAM, as Harmattan does it: its enable-swap.conf sets up
 # 256 MB of ramzswap without a backing device on phones with more than 1 GB
 # (the N950 and the N9 both just above). zram is ramzswap's successor here,
-# lzo-rle the kernel's default. OneNAND's mtd4 as flash-backed swap would need
-# CONFIG_MTD_SWAP for wear levelling; raw mtdblock would wear the flash out.
+# lzo-rle the kernel's default. Flash swap on OneNAND behind it: 45-n950-flashswap.
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 grep -q '^/dev/zram0 ' /proc/swaps && exit 0
 modprobe zram num_devices=1 2>/dev/null || exit 0

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Drop the page cache once, 5 minutes after boot, when the session has
+# started: it is full of files the boot read once. Under Harmattan a manual
+# "sync & free all" after a boot made the phone noticeably faster; this does
+# it on its own.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+setsid sh -c 'sleep 300; sync; echo 3 > /proc/sys/vm/drop_caches' \
+	</dev/null >/dev/null 2>&1 &
+exit 0
