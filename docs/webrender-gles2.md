@@ -62,6 +62,40 @@ WebRender builds per-backend shader variants already (GLSL 150 and GLSL ES
 On the Gecko side, the GPU backend is only chosen with ES 3.0
 (`gfxInfo`/`gfxPlatform`); that gate would have to accept the ES 2.0 path.
 
+## The N950's GPU, measured
+
+`browser/webrender-gles2/tools/gles2-probe.c` on the phone (PowerVR SGX 530,
+OpenGL ES 2.0 build 1.17@4948957, 2026-11-11):
+
+- Vertex texture fetch works: 8 texture units in the vertex shader (8 in the
+  fragment shader, 8 combined). An RGBA32F texture read with `texture2D` at
+  texel centres returned every test value exactly: integers up to 2^24
+  (16777216) and down to -16777215, fractions, 1e-6 and ±3e38. That is the
+  replacement for `texelFetch` on WebRender's data textures.
+- highp is IEEE single precision in both stages (2^-23); highp int covers
+  ±2^24. Integers in floats are exact up to 2^24, as WebRender's data needs.
+- 16 vertex attributes, 128 vertex and 64 fragment uniform vectors,
+  textures and render buffers up to 2048 x 2048.
+- Only 8 varying vectors. Counting WebRender's varyings per shader (with its
+  includes, all feature variants, every float or vec2 as a whole vector, so
+  an upper bound): cs_svg_filter_node 17, composite 16, cs_border_segment
+  14, cs_clip_rectangle 13, cs_border_solid 11, cs_blur 9, ps_text_run 8,
+  the rest 6 or fewer. Those over 8 need their per-primitive constants
+  (WebRender's `flat` varyings) read in the fragment shader from the data
+  textures by one primitive index instead, or packed.
+
+Extensions present (relevant ones): OES_texture_float, OES_texture_half_float,
+EXT_texture_rg (R8, RG8), EXT_texture_storage, OES_element_index_uint (no
+16384-quad split), OES_vertex_array_object, OES_mapbuffer,
+OES_standard_derivatives, OES_fragment_precision_high, EXT_discard_framebuffer,
+OES_egl_sync, OES_depth24, OES_packed_depth_stencil, OES_depth_texture,
+EXT_texture_format_BGRA8888, EXT_shader_texture_lod, OES_EGL_image_external,
+KHR_debug, EXT_multisampled_render_to_texture.
+
+Missing, to be rebuilt: instanced drawing (no instanced-arrays extension of
+any kind), pixel buffer objects, framebuffer blit, integer textures and
+attributes, `texelFetch`, bit operations, `flat`.
+
 ## Assessment
 
 About 25 items. Most shader work is mechanical; the real work is replacing
