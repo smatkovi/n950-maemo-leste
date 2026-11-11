@@ -11,8 +11,16 @@ save)
 	[ "$(date +%s)" -gt 1700000000 ] || exit 0          # never save a bogus clock
 	mkdir -p "${F%/*}"; echo $(( $(date +%s) - rtc )) > "$F"; echo "rtc-offset: saved $(cat "$F")" ;;
 apply)
+	# Harmattan can set the RTC: after a MeeGo boot it shows the real time
+	# itself, and the stored offset would move the clock by decades
+	if [ "$rtc" -gt 1700000000 ] && [ "$rtc" -lt 2524608000 ]; then
+		mkdir -p "${F%/*}"; echo 0 > "$F"
+		date -u -s "@$rtc" >/dev/null && echo "rtc-offset: RTC set by Harmattan, clock taken from it: $(date)"
+		exit 0
+	fi
 	[ -s "$F" ] || exit 0
 	off=$(cat "$F"); now=$(( rtc + off ))
+	[ "$now" -lt 2524608000 ] || { echo "rtc-offset: rtc+offset lies after 2050, not applying"; exit 0; }
 	# the RTC restarts at 2000-01-01 after a battery swap: then rtc+offset is far in the past
 	[ "$now" -gt 1700000000 ] || { echo "rtc-offset: rtc looks reset (battery swap?), leaving the clock to swclock"; exit 0; }
 	[ "$now" -ge $(( $(date +%s) - 86400 )) ] || { echo "rtc-offset: would move the clock back, not applying"; exit 0; }
