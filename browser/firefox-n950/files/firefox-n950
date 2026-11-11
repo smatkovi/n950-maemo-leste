@@ -1,0 +1,4 @@
+#!/bin/sh
+# Starts the N950's own Firefox build, installed in /opt/firefox-n950.
+export MOZ_APP_LAUNCHER=/usr/bin/firefox-n950
+exec /opt/firefox-n950/firefox-n950 "$@"

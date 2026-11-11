@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Version=1.0
+Type=Application
+Name=Firefox (N950)
+Comment=Firefox ESR, slim build for the N950
+Exec=/usr/bin/firefox-n950 %u
+Icon=firefox-n950
+StartupWMClass=firefox-n950
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+Categories=Network;WebBrowser;
