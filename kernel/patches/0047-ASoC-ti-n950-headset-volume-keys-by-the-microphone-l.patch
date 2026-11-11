@@ -1,4 +1,4 @@
-From 1582ccb66e08ef3f78e21c0f0868acd1839e70f9 Mon Sep 17 00:00:00 2001
+From 4516e6119edf51409165ceeed27160d8cd4254e1 Mon Sep 17 00:00:00 2001
 From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
 Date: Wed, 11 Nov 2026 07:49:40 +0100
 Subject: [PATCH] ASoC: ti: n950: headset volume keys by the microphone line's
@@ -20,8 +20,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../bindings/sound/nokia,n950-audio.yaml      |  11 +-
  arch/arm/boot/dts/ti/omap/omap3-n950.dts      |   8 +-
  sound/soc/ti/Kconfig                          |   2 +-
- sound/soc/ti/n950.c                           | 114 ++++++++++++++++--
- 4 files changed, 119 insertions(+), 16 deletions(-)
+ sound/soc/ti/n950.c                           | 118 ++++++++++++++++--
+ 4 files changed, 123 insertions(+), 16 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/sound/nokia,n950-audio.yaml b/Documentation/devicetree/bindings/sound/nokia,n950-audio.yaml
 index 24e9cd474..7c48b589a 100644
@@ -53,10 +53,10 @@ index 24e9cd474..7c48b589a 100644
    - compatible
    - nokia,cpu-dai
 diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
-index c475c3b7f..a57009ad4 100644
+index 6d3f3bd26..f1f0248cd 100644
 --- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
 +++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
-@@ -597,14 +597,18 @@ sound: sound {
+@@ -590,14 +590,18 @@ sound: sound {
  		 */
  		hp-det-gpios = <&twl_gpio 0 GPIO_ACTIVE_LOW>;
  		/*
@@ -91,7 +91,7 @@ index 25f59a01e..1fdb573d0 100644
  	select SND_SOC_TWL4030
  	select SND_SOC_TLV320DAC33
 diff --git a/sound/soc/ti/n950.c b/sound/soc/ti/n950.c
-index f7468eab2..a96a072e9 100644
+index f7468eab2..aec186f0e 100644
 --- a/sound/soc/ti/n950.c
 +++ b/sound/soc/ti/n950.c
 @@ -15,12 +15,18 @@
@@ -115,7 +115,7 @@ index f7468eab2..a96a072e9 100644
  #include <linux/input.h>
  #include <linux/interrupt.h>
  #include <linux/mfd/twl.h>
-@@ -46,13 +52,29 @@
+@@ -46,13 +52,33 @@
  #define ACI_ACCESSORY_MODE	BIT(0)	/* in ECI_DBI_CTRL; DBI mode when 0 */
  #define ACI_DISABLE		BIT(1)	/* in ECI_DBI_CTRL */
  #define AV_COMP1_EN		BIT(0)
@@ -128,11 +128,15 @@ index f7468eab2..a96a072e9 100644
 +#define N950_BUTTONS		(SND_JACK_BTN_0 | SND_JACK_BTN_1 | \
 +				 SND_JACK_BTN_2)
 +
-+/* microphone line voltage of a pressed button, upper limits in mV */
-+static unsigned int play_max_mv = 120;
++/*
++ * Microphone line voltage of a pressed key, upper limits in mV. Measured
++ * with a three-key headset (play/pause, volume up, volume down): line idle
++ * at 1640 mV, keys at 135, 318 and 675 mV; the limits sit halfway between.
++ */
++static unsigned int play_max_mv = 225;
 +module_param(play_max_mv, uint, 0644);
 +MODULE_PARM_DESC(play_max_mv, "headset play/pause key: line below this (mV)");
-+static unsigned int volup_max_mv = 350;
++static unsigned int volup_max_mv = 500;
 +module_param(volup_max_mv, uint, 0644);
 +MODULE_PARM_DESC(volup_max_mv,
 +		 "headset volume up key: line below this (mV), volume down above");
@@ -145,7 +149,7 @@ index f7468eab2..a96a072e9 100644
  	struct gpio_desc *speaker_amp_gpio;
  	/* basic headset detection and button through the TWL5031 ACI */
  	int aci_irq;
-@@ -62,7 +84,9 @@ struct n950_audio_priv {
+@@ -62,7 +88,9 @@ struct n950_audio_priv {
  	struct delayed_work plug_work;
  	struct delayed_work button_work;
  	struct mutex aci_lock;
@@ -156,7 +160,7 @@ index f7468eab2..a96a072e9 100644
  };
  
  static int n950_twl_hw_params(struct snd_pcm_substream *substream,
-@@ -216,11 +240,56 @@ static void n950_aci_off(struct n950_audio_priv *priv)
+@@ -216,11 +244,56 @@ static void n950_aci_off(struct n950_audio_priv *priv)
  	n950_aci_accint(false);
  	n950_aci_write(ACI_AV_CTRL, 0);
  	n950_aci_write(ACI_ECI_DBI_CTRL, ACI_DISABLE);
@@ -216,7 +220,7 @@ index f7468eab2..a96a072e9 100644
  }
  
  static void n950_plug_work(struct work_struct *work)
-@@ -260,6 +329,11 @@ static void n950_plug_work(struct work_struct *work)
+@@ -260,6 +333,11 @@ static void n950_plug_work(struct work_struct *work)
  	}
  
  	priv->headset = true;
@@ -228,7 +232,7 @@ index f7468eab2..a96a072e9 100644
  	snd_soc_jack_report(&n950_hp_jack, SND_JACK_MICROPHONE,
  			    SND_JACK_MICROPHONE);
  	n950_aci_accint(true);
-@@ -267,7 +341,10 @@ static void n950_plug_work(struct work_struct *work)
+@@ -267,7 +345,10 @@ static void n950_plug_work(struct work_struct *work)
  	mutex_unlock(&priv->aci_lock);
  }
  
@@ -240,7 +244,7 @@ index f7468eab2..a96a072e9 100644
  static void n950_button_work(struct work_struct *work)
  {
  	struct n950_audio_priv *priv = container_of(work, struct n950_audio_priv,
-@@ -284,10 +361,13 @@ static void n950_button_work(struct work_struct *work)
+@@ -284,10 +365,13 @@ static void n950_button_work(struct work_struct *work)
  	av = n950_aci_read(ACI_AV_CTRL);
  	pressed = av >= 0 && (av & AV_STATUS_A1_COMP);
  
@@ -258,7 +262,7 @@ index f7468eab2..a96a072e9 100644
  	}
  
  	if (pressed) {
-@@ -366,6 +446,8 @@ static int n950_aci_init(struct snd_soc_card *card)
+@@ -366,6 +450,8 @@ static int n950_aci_init(struct snd_soc_card *card)
  		return 0;
  
  	snd_jack_set_key(n950_hp_jack.jack, SND_JACK_BTN_0, KEY_PLAYPAUSE);
@@ -267,7 +271,7 @@ index f7468eab2..a96a072e9 100644
  
  	n950_aci_accint(false);
  	err = devm_request_threaded_irq(card->dev, priv->aci_irq, NULL,
-@@ -398,7 +480,7 @@ static int n950_twl_init(struct snd_soc_pcm_runtime *rtd)
+@@ -398,7 +484,7 @@ static int n950_twl_init(struct snd_soc_pcm_runtime *rtd)
  
  	err = snd_soc_card_jack_new(card, "Headphone Jack",
  				    SND_JACK_HEADPHONE | SND_JACK_MICROPHONE |
@@ -276,7 +280,7 @@ index f7468eab2..a96a072e9 100644
  	if (err)
  		return err;
  
-@@ -556,6 +638,14 @@ static int n950_audio_probe(struct platform_device *pdev)
+@@ -556,6 +642,14 @@ static int n950_audio_probe(struct platform_device *pdev)
  			return -EPROBE_DEFER;
  		priv->plug_supply = NULL;
  	}
