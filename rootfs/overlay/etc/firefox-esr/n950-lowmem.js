@@ -1,0 +1,43 @@
+// Firefox ESR on the Nokia N950: one Cortex-A8 core, 1 GB of RAM, an
+// OpenGL ES 2.0 GPU (PowerVR SGX530). Defaults (pref, not lockPref), so a
+// user can still change them in about:config.
+
+// Memory: one web content process, no site isolation (Fission), no
+// preloaded spare process; tabs unloaded when memory runs low.
+pref("fission.autostart", false);
+pref("dom.ipc.processCount", 1);
+pref("dom.ipc.processCount.webIsolated", 1);
+pref("dom.ipc.processPrelaunch.enabled", false);
+pref("browser.tabs.unloadOnLowMemory", true);
+// no pages kept for back/forward, smaller caches and image memory
+pref("browser.sessionhistory.max_total_viewers", 0);
+pref("browser.cache.memory.capacity", 16384);
+pref("media.memory_cache_max_size", 16384);
+pref("image.mem.surfacecache.max_size_kb", 32768);
+pref("browser.sessionstore.interval", 60000);
+
+// Drawing: WebRender needs OpenGL ES 3.0, the SGX530 has 2.0, so the
+// software renderer; fewer frames and no animations for the one core.
+pref("gfx.webrender.software", true);
+pref("layout.frame_rate", 30);
+pref("general.smoothScroll", false);
+pref("toolkit.cosmeticAnimations.enabled", false);
+pref("ui.prefersReducedMotion", 1);
+// 854x480 on 3.9 inches
+pref("layout.css.devPixelsPerPx", "1.5");
+
+// Startup and background work: a blank start and new tab page, no Pocket,
+// no telemetry, studies or recommendations.
+pref("browser.startup.homepage", "about:blank");
+pref("browser.newtabpage.enabled", false);
+pref("browser.newtabpage.activity-stream.feeds.topsites", false);
+pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
+pref("extensions.pocket.enabled", false);
+pref("browser.discovery.enabled", false);
+pref("datareporting.healthreport.uploadEnabled", false);
+pref("datareporting.policy.dataSubmissionEnabled", false);
+pref("toolkit.telemetry.enabled", false);
+pref("toolkit.telemetry.unified", false);
+pref("app.shield.optoutstudies.enabled", false);
+pref("app.normandy.enabled", false);
+pref("browser.ml.enable", false);
