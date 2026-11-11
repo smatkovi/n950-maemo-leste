@@ -1,0 +1,84 @@
+# Gecko ESR 153 with EmbedLite for the Nokia N950 under Maemo Leste (armhf),
+# cross-built on an x86_64 PC. The engine under a native Qt 5 browser UI
+# (qtmozembed); no Firefox front-end. build.sh sets SYSROOT (a Leste/Devuan
+# excalibur armhf root with the -dev packages) and RUSTUP_TOOLCHAIN_BIN.
+#
+# A combination of EmbedLite's own configurations: mozconfig.qtN9-qt-cross
+# (Nemo/Mer on the N9: ARMv7-A, NEON, hard float, EGL, Qt widgets) and
+# mozconfig.qtN900-qt (Cortex-A8 tuning, Thumb-2, -O2, system pixman, the
+# features the N900 went without), on top of Sailfish's current
+# mozconfig.merqtxulrunner (embedlite, mobile/sailfishos, cairo-qt, no
+# jemalloc). The N950, N9 and N900 all have a Cortex-A8.
+
+ac_add_options --with-embedlite
+ac_add_options --enable-application=mobile/sailfishos
+ac_add_options --enable-default-toolkit=cairo-qt
+ac_add_options --with-gl-provider=EGL
+ac_add_options --with-app-name=xulrunner-qt5
+ac_add_options --prefix=/usr
+ac_add_options --libdir=/usr/lib/arm-linux-gnueabihf
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/../obj-embedlite-n950
+ac_add_options --disable-bootstrap
+export MOZILLA_OFFICIAL=1
+
+# target: Cortex-A8, ARMv7-A, NEON, hard float (Leste is armhf), Thumb-2
+ac_add_options --target=arm-unknown-linux-gnueabihf
+ac_add_options --with-arch=armv7-a
+ac_add_options --with-fpu=neon
+ac_add_options --with-float-abi=hard
+ac_add_options --with-thumb=yes
+ac_add_options --with-sysroot="$SYSROOT"
+ac_add_options --enable-linker=lld
+ac_add_options --with-ccache=sccache
+export CC=clang
+export CXX=clang++
+export HOST_CC=clang
+export HOST_CXX=clang++
+export CFLAGS="-mcpu=cortex-a8 -mtune=cortex-a8"
+export CXXFLAGS="-mcpu=cortex-a8 -mtune=cortex-a8 -DUSE_ANDROID_OMTC_HACKS=1 -DUSE_OZONE=1 -DMOZ_UA_OS_AGNOSTIC=1"
+export RUSTFLAGS="-C target-cpu=cortex-a8"
+export RUSTC="$RUSTUP_TOOLCHAIN_BIN/rustc"
+export CARGO="$RUSTUP_TOOLCHAIN_BIN/cargo"
+export RUSTDOC="$RUSTUP_TOOLCHAIN_BIN/rustdoc"
+
+# -O2: smaller code than -O3 for the A8's 32 KB caches
+ac_add_options --enable-optimize=-O2
+ac_add_options --enable-release
+ac_add_options --enable-cpp-rtti
+ac_add_options --disable-debug
+ac_add_options --disable-debug-symbols
+ac_add_options --enable-strip
+ac_add_options --enable-install-strip
+ac_add_options --disable-tests
+ac_add_options --disable-webdriver
+
+# embedding: Qt and Gecko share one allocator, the system's
+ac_add_options --disable-jemalloc
+
+# libraries other processes on the phone load anyway (X, GTK, Qt): one
+# copy in memory
+ac_add_options --with-system-zlib
+ac_add_options --with-system-pixman
+ac_add_options --with-system-jpeg
+ac_add_options --with-system-ffi
+ac_add_options --with-system-webp
+
+# left out: nothing on the phone uses it, or the phone cannot carry it
+ac_add_options --disable-updater
+ac_add_options --disable-crashreporter
+ac_add_options --disable-backgroundtasks
+ac_add_options --disable-webrtc
+ac_add_options --disable-printing
+ac_add_options --disable-accessibility
+ac_add_options --disable-dbus
+ac_add_options --disable-dconf
+ac_add_options --disable-necko-wifi
+ac_add_options --disable-negotiateauth
+ac_add_options --disable-webspeech
+ac_add_options --disable-synth-speechd
+ac_add_options --disable-jxl
+ac_add_options --without-wasm-sandboxed-libraries
+ac_add_options --disable-parental-controls
+ac_add_options --disable-pref-extensions
+# EmbedLite runs Gecko in one process: no content process to sandbox
+ac_add_options --disable-sandbox

@@ -16,6 +16,18 @@ pref("media.memory_cache_max_size", 16384);
 pref("image.mem.surfacecache.max_size_kb", 32768);
 pref("browser.sessionstore.interval", 60000);
 
+// JavaScript: save a page's scripts as compiled bytecode on the first visit
+// already (default: after the 4th load), so later visits skip parsing and
+// compiling, the slow part on the Cortex-A8. WebAssembly's compiled machine
+// code is cached as well (javascript.options.wasm_caching, on by default).
+// Both live in the disk cache: a fixed 100 MB instead of the smart size,
+// which is small on a nearly full root file system.
+pref("dom.script_loader.bytecode_cache.enabled", true);
+pref("dom.script_loader.bytecode_cache.strategy", -1);
+pref("browser.cache.disk.enable", true);
+pref("browser.cache.disk.smart_size.enabled", false);
+pref("browser.cache.disk.capacity", 102400);
+
 // Drawing: WebRender needs OpenGL ES 3.0, the SGX530 has 2.0, so the
 // software renderer; fewer frames and no animations for the one core.
 pref("gfx.webrender.software", true);
