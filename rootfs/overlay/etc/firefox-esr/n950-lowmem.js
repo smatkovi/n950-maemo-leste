@@ -19,10 +19,16 @@ pref("browser.sessionstore.interval", 60000);
 // Drawing: WebRender needs OpenGL ES 3.0, the SGX530 has 2.0, so the
 // software renderer; fewer frames and no animations for the one core.
 pref("gfx.webrender.software", true);
+// ...but composited on the GPU: SWGL's tiles shown through OpenGL ES 2.0
+// (RenderCompositorOGLSWGL, Firefox's default on Android, made for GPUs
+// without ES 3.0), so scrolling and blending do not cost the CPU
+pref("gfx.webrender.software.opengl", true);
 pref("layout.frame_rate", 30);
 pref("general.smoothScroll", false);
 pref("toolkit.cosmeticAnimations.enabled", false);
 pref("ui.prefersReducedMotion", 1);
+// no AV1 (too heavy for the Cortex-A8): sites fall back to VP9 or H.264
+pref("media.av1.enabled", false);
 // 854x480 on 3.9 inches
 pref("layout.css.devPixelsPerPx", "1.5");
 

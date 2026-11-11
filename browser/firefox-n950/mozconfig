@@ -1,0 +1,54 @@
+# Firefox ESR for the Nokia N950 (armhf, Cortex-A8 with NEON, 1 GB of RAM,
+# OpenGL ES 2.0 only), cross-built on an x86_64 PC by build.sh, which sets
+# SYSROOT (a Leste/Devuan excalibur armhf root with the -dev packages),
+# RUSTUP_TOOLCHAIN_BIN and MOZ_OBJDIR. Everything the phone has no use for is
+# left out.
+
+ac_add_options --enable-application=browser
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/../obj-n950
+ac_add_options --disable-bootstrap
+
+# target: ARMv7-A, NEON, hard float, Thumb-2 (Rust: thumbv7neon)
+ac_add_options --target=arm-unknown-linux-gnueabihf
+ac_add_options --with-arch=armv7-a
+ac_add_options --with-fpu=neon
+ac_add_options --with-float-abi=hard
+ac_add_options --with-thumb=yes
+ac_add_options --with-sysroot="$SYSROOT"
+ac_add_options --enable-linker=lld
+# compiler cache for C, C++ and Rust
+ac_add_options --with-ccache=sccache
+export CC=clang
+export CXX=clang++
+export HOST_CC=clang
+export HOST_CXX=clang++
+export RUSTC="$RUSTUP_TOOLCHAIN_BIN/rustc"
+export CARGO="$RUSTUP_TOOLCHAIN_BIN/cargo"
+export RUSTDOC="$RUSTUP_TOOLCHAIN_BIN/rustdoc"
+
+# a release build without debugging aids
+ac_add_options --enable-release
+ac_add_options --enable-optimize=-O2
+ac_add_options --disable-debug
+ac_add_options --disable-debug-symbols
+ac_add_options --disable-tests
+ac_add_options --enable-strip
+ac_add_options --enable-install-strip
+ac_add_options --disable-geckodriver
+
+# its own name next to Debian's firefox-esr
+ac_add_options --with-branding=browser/branding/unofficial
+ac_add_options --with-app-name=firefox-n950
+
+# left out: nothing on the phone uses it, or the phone cannot carry it
+ac_add_options --disable-crashreporter
+ac_add_options --disable-updater
+ac_add_options --disable-backgroundtasks
+ac_add_options --disable-webrtc
+ac_add_options --disable-jxl
+ac_add_options --disable-webspeech
+ac_add_options --disable-synth-speechd
+ac_add_options --disable-necko-wifi
+ac_add_options --disable-negotiateauth
+ac_add_options --disable-accessibility
+ac_add_options --without-wasm-sandboxed-libraries
