@@ -190,3 +190,24 @@ up to 2048 x 2048 on a tile-based GPU). Reftests under a strict ES 2.0
 context on the PC: gradient 99/99, clip 25/30, scrolling 27/29, split
 20/21, text 42/71, transforms 28/55; blend modes, borders, box shadows
 and filters are still mostly wrong.
+
+### Later on 2026-11-11
+
+- Packed 32-bit instance fields (quad flags in `aData.z`, glyph index
+  with flags and resource address with a byte above in the brush
+  instances) exceed what a float holds exactly; on ES 2.0 they are now
+  decoded from the attribute's 16-bit halves (Gecko patches 0169, 0172).
+  Text drew every glyph of a run at one spot before.
+- GLSL ES leaves unwritten globals undefined: Mesa reads zero, the SGX530
+  garbage. The integer globals that stand in for varyings in the vertex
+  shader start at zero (0170).
+- The quad fragment shader unpacks its flags once per fragment: simple
+  quads rasterise in 84 ms instead of 156 ms on the SGX530 (still 33 ms
+  with SWGL); text in 40 ms against 230 ms with SWGL.
+- On the SGX530, transforms-simple renders with stripes when fragment
+  shaders run in highp and correctly in mediump; under Mesa it is right
+  in both. Not yet understood (a derivative of a computed expression in
+  highp is the suspect).
+- PC reftests under strict ES 2.0: 427 of 560 pass (349 before these
+  fixes): gradient 99/99, scrolling 29/29, split 21/21, clip 27/30,
+  filters 65/83, text 53/71, mask 14/18, transforms 31/55, blend 10/24.
