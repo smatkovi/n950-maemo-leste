@@ -51,6 +51,9 @@ install)
 		install -m 755 "$SRC/../obj-embedlite-n950/dist/bin/lib$l.so" \
 			"$2/usr/lib/arm-linux-gnueabihf/xulrunner-qt5-153.6.0/"
 	done
+	# libxul.pc links -lxul from the SDK directory
+	ln -sf ../../../xulrunner-qt5-153.6.0/libxul.so \
+		"$2/usr/lib/arm-linux-gnueabihf/xulrunner-qt5-devel-153.6.0/sdk/lib/libxul.so"
 	;;
 *) echo "usage: build.sh [configure|build|install DESTDIR]" >&2; exit 2 ;;
 esac
