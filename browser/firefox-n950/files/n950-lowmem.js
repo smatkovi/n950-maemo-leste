@@ -35,6 +35,10 @@ pref("gfx.webrender.software", true);
 // (RenderCompositorOGLSWGL, Firefox's default on Android, made for GPUs
 // without ES 3.0), so scrolling and blending do not cost the CPU
 pref("gfx.webrender.software.opengl", true);
+// Linux keeps hardware compositing off for drivers it does not know
+// ("blocked by platform"), and with it the OpenGL compositor that lets the
+// SGX530 composite SWGL's tiles.
+pref("layers.acceleration.force-enabled", true);
 pref("layout.frame_rate", 30);
 pref("general.smoothScroll", false);
 pref("toolkit.cosmeticAnimations.enabled", false);
