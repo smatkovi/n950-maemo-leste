@@ -152,3 +152,41 @@ Next, the device side: instancing emulation, integer attributes as float
 halves, float data textures with the `sX_Size` uniforms, no pixel buffer
 objects, a blit fallback; then the varying reduction, then a first frame
 on the phone against SWGL.
+
+## On the phone (2026-11-11)
+
+WebRender runs on the SGX530 (Gecko patches 0158 to 0169): one
+framebuffer binding, drawing without instancing (each instance repeated
+for the four corners), integer attributes as 16-bit halves, ES 2.0
+texture formats and uploads, copies instead of blits, per-program
+texture units (8 on the SGX), quad, gradient and clip shaders packed into
+8 varying vectors, and the samplers' size uniforms that the texelFetch
+emulation needs.
+
+The SGX530's driver (DDK 1.17) corrupts its heap when a float texture the
+GPU may still read gets a sub-image (`tools/gles2-floattex.c` shows it);
+WebRender's float data textures are therefore allocated anew at their
+first upload of each frame.
+
+Measured with wrench on the N950 (854 x 480, hidden window, no vsync,
+render() up to glFinish, against SWGL on the same phone), milliseconds
+per frame:
+
+| scene | SGX raster | SWGL raster | SGX composite | SWGL composite |
+|---|---|---|---|---|
+| simple-batching | 152.9 | 32.8 | 6.3 | 9.6 |
+| unaligned-gradient | 524.6 | 26.0 | 6.0 | 12.7 |
+| aligned-gradient | 529.2 | 785.3 | 6.3 | 12.3 |
+| transforms-simple | 2642.3 | 988.6 | 6.3 | 12.2 |
+| text-rendering | 55.8 | 229.5 | 12.3 | 23.9 |
+
+Compositing on the GPU is twice as fast as SWGL's, and text is four times
+faster. Rasterising with WebRender's general shaders is slower than SWGL
+for everything else. Per frame the SGX spends most of its time in
+glDrawElements (about 37 ms per call in simple-batching: every vertex
+fetches its instance's data from float textures, four times per
+instance without instancing) and in clears (18 ms each, render targets
+up to 2048 x 2048 on a tile-based GPU). Reftests under a strict ES 2.0
+context on the PC: gradient 99/99, clip 25/30, scrolling 27/29, split
+20/21, text 42/71, transforms 28/55; blend modes, borders, box shadows
+and filters are still mostly wrong.
