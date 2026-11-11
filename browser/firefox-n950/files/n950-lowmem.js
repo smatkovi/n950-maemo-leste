@@ -28,12 +28,12 @@ pref("browser.cache.disk.enable", true);
 pref("browser.cache.disk.smart_size.enabled", false);
 pref("browser.cache.disk.capacity", 102400);
 
-// Drawing: WebRender on the SGX530 through its OpenGL ES 2.0 path (the
-// patches in patches/): text rasterises about 5 times faster than with the
-// software renderer. gfx.webrender.software = true in about:config goes
-// back to the software renderer.
-pref("gfx.webrender.all", true);
-pref("gfx.webrender.software", false);
+// Drawing: the software renderer for now. WebRender's OpenGL ES 2.0 path
+// for the SGX530 (patches/) rasterises text about 5 times faster, but 17 of
+// its 51 shader variants do not compile on the SGX yet (too many varyings);
+// gfx.webrender.all = true and gfx.webrender.software = false try it.
+pref("gfx.webrender.all", false);
+pref("gfx.webrender.software", true);
 // Compiled shader programs are kept in the profile: the SGX530 needs
 // about 1.5 s per program, so each is compiled only once.
 pref("gfx.webrender.program-binary-disk", true);
