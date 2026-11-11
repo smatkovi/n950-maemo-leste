@@ -45,6 +45,12 @@ build)
 install)
 	make -C "$SRC/../obj-embedlite-n950/mobile/sailfishos/installer" install \
 		DESTDIR="${2:?install needs DESTDIR}"
+	# Sailfish uses the system's NSS and NSPR, this engine its own (Leste's
+	# are older than Gecko 153 needs): next to libxul, found through its rpath
+	for l in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3; do
+		install -m 755 "$SRC/../obj-embedlite-n950/dist/bin/lib$l.so" \
+			"$2/usr/lib/arm-linux-gnueabihf/xulrunner-qt5-153.6.0/"
+	done
 	;;
 *) echo "usage: build.sh [configure|build|install DESTDIR]" >&2; exit 2 ;;
 esac
