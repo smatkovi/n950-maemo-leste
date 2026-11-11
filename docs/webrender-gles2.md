@@ -109,3 +109,46 @@ Before starting: the SGX530's actual extension list (float textures, vertex
 texture units, `EXT_instanced_arrays`, `OES_element_index_uint`,
 `OES_vertex_array_object`), and a measurement of SWGL with the GL compositor
 (`gfx.webrender.software.opengl`), which already moves compositing to the GPU.
+
+## Progress (2026-11-11)
+
+Work tree: branch `n950-esr153.6` of github smatkovi/gecko-dev,
+`n950/gecko-patches` (Gecko 153.6.0esr with EmbedLite).
+
+Test bed on the PC: wrench with `--renderer es2` under Mesa with
+`MESA_GLES_VERSION_OVERRIDE=2.0` and the instancing extensions hidden
+(`MESA_EXTENSION_OVERRIDE=-GL_EXT_instanced_arrays ...`), a real ES 2.0
+context. `wrench compile_shaders` compiles and links every shader variant
+(`WRENCH_SHADERS` reads them from the source tree, `WRENCH_SHADER_DUMP`
+writes them out, `WRENCH_REPORT_SAMPLERS` lists the active samplers).
+
+Done:
+
+- ES 2.0 contexts are detected (GL_VERSION, glGetString(GL_EXTENSIONS)),
+  `ShaderVersion::Gles2` gives `#version 100` with `WR_GLES2`.
+- All 49 GLES shader variants compile and link as GLSL ES 1.00. Shared
+  changes for every version (bit fields through WR_BITS/WR_HAS_FLAG/...,
+  switch as if/else, no array returns or constructors) leave the 1471
+  wrench reftests under GL 3 exactly as with the original shaders. The
+  ES 1.00-only differences are a line rewrite in webrender_build
+  (texelFetch, textureSize, integer samplers, attributes and varyings,
+  texture(), mix with booleans, transpose, inverse, round).
+
+Measured against the SGX530's limits:
+
+- Samplers: one variant uses 9 of 8 (brush_yuv_image with ALPHA_PASS);
+  merging the integer data textures into the float ones fixes it.
+- Varyings, packed by the GLSL ES 1.00 rules: 15 of 49 variants need 9 to
+  13 rows of 8: ps_quad_mask, ps_quad_box_shadow, ps_quad_gradient,
+  cs_border_segment, cs_border_solid, cs_clip_rectangle, brush_blend,
+  cs_svg_filter_node, the YUV ones. Common on web pages (rounded clips,
+  borders, shadows, gradients): their per-primitive constants have to move
+  out of varyings.
+- Integers: SGX highp int is ±2^24, so packed 32-bit fields in instance
+  attributes (aData, aFlags) and in the primitive headers' user data have
+  to reach ES 2.0 shaders as 16-bit halves.
+
+Next, the device side: instancing emulation, integer attributes as float
+halves, float data textures with the `sX_Size` uniforms, no pixel buffer
+objects, a blit fallback; then the varying reduction, then a first frame
+on the phone against SWGL.
