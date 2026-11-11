@@ -211,3 +211,41 @@ and filters are still mostly wrong.
 - PC reftests under strict ES 2.0: 427 of 560 pass (349 before these
   fixes): gradient 99/99, scrolling 29/29, split 21/21, clip 27/30,
   filters 65/83, text 53/71, mask 14/18, transforms 31/55, blend 10/24.
+
+### Where the SGX530's raster time goes (2026-11-11 evening)
+
+Measured with wrench on the phone (854×480, hidden window, every frame
+rasterised, render time to glFinish, ms per frame):
+
+- Render target size is not it. Rendering into a texture and sampling it
+  afterwards costs by the texture's size on the SGX530 (`tools/gles2-rtt.c`:
+  1024² about 10 ms, 2048² about 44 ms), but shrinking WebRender's shared
+  targets and atlases to 512 or 1024 and the picture tiles to 512×256
+  changed nothing. Discarding framebuffers (GL_EXT_discard_framebuffer)
+  and RGBA instead of BGRA targets changed nothing either.
+- Per-draw timing fenced with glFinish is misleading on this driver: the
+  first clear of a frame took the whole previous raster time. Only
+  totals are reliable.
+- The cost is the fragment shaders, including code a fragment never
+  executes. With the quad fragment shader reduced to a constant colour,
+  rectangles took 16 ms and gradients 24 ms. Removing only the edge
+  anti-aliasing branch, which no rectangle in the scene enters, took
+  rectangles from 84 to 30 ms; removing the gradient-kind switch and the
+  stop-tree path took gradients from 454 to 234 ms, with the flag
+  unpacking gone as well 111 ms.
+- Gecko patch 0176 adds ES 2.0-only fast variants, chosen per batch:
+  ps_quad_textured without edge anti-aliasing or mask output, and a
+  ps_quad_gradient for clamped linear gradients with two stops whose
+  vertex shader computes the stop factor.
+
+| benchmark          | before | 0176 | SWGL | image vs SWGL |
+|--------------------|-------:|-----:|-----:|---------------|
+| simple-batching    |   83.7 | 31.2 | 28.6 | same          |
+| unaligned-gradient |    454 | 73.0 | 30.7 | same          |
+| aligned-gradient   |      – | 69.0 |    – | same          |
+| text-rendering     |     41 | 40.9 |  207 | grey vs subpixel AA |
+| transforms-simple  |   1583 | 1583 |  701 | 0.1 %         |
+
+Text differs from SWGL only by anti-aliasing: ES 2.0 has no dual-source
+blending, so glyphs are grey-scale anti-aliased. transforms-simple needs
+edge anti-aliasing on most of its area and keeps the general shader.
