@@ -1,16 +1,44 @@
 #!/bin/sh
 # The Wi-Fi chip (wl1271 on SPI) and the CMT modem probe late, often after
 # icd2 and ofono have started and found nothing. Once the devices exist,
-# restart both, so that icd2 manages wlan0 and ofono boots the modem through
-# /dev/cmt. In the background, so the rest of the boot does not wait.
+# restart what missed them, so that icd2 manages wlan0 and ofono boots the
+# modem through /dev/cmt. In the background, so the rest of the boot does
+# not wait.
+#
+# ofono is restarted only when it has not powered the modem by then: a
+# restart switches a running modem off, and the init script's "restart"
+# does not wait for the old ofonod to exit, so start-stop-daemon --oknodo
+# saw the dying one and started none (a slow boot ran this after the modem
+# was online and left the phone without ofono).
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+modem_powered() {
+	dbus-send --system --print-reply --dest=org.ofono / \
+		org.ofono.Manager.GetModems 2>/dev/null |
+		grep -A1 '"Powered"' | grep -q 'boolean true'
+}
+
 (
 	for i in $(seq 1 60); do
 		[ -e /sys/class/net/wlan0 ] && [ -e /dev/cmt/cmt_en/value ] && break
 		sleep 1
 	done
 	sleep 2
-	[ -e /dev/cmt/cmt_en/value ] && rc-service ofono restart
+	if [ -e /dev/cmt/cmt_en/value ]; then
+		# cellulard powers the modem on soon after ofono is up
+		for i in $(seq 1 30); do
+			modem_powered && break
+			sleep 1
+		done
+		if ! modem_powered; then
+			rc-service ofono stop
+			for i in $(seq 1 20); do
+				pidof ofonod >/dev/null || break
+				sleep 1
+			done
+			rc-service ofono start
+		fi
+	fi
 	[ -e /sys/class/net/wlan0 ] && rc-service icd2 restart
 ) </dev/null >/dev/null 2>&1 &
 exit 0
