@@ -249,3 +249,35 @@ rasterised, render time to glFinish, ms per frame):
 Text differs from SWGL only by anti-aliasing: ES 2.0 has no dual-source
 blending, so glyphs are grey-scale anti-aliased. transforms-simple needs
 edge anti-aliasing on most of its area and keeps the general shader.
+
+### Every shader on the SGX530 (2026-11-11 night)
+
+On the phone, 17 of the 51 ES 2.0 shader variants failed at first, which
+the PC under Mesa had hidden (it has 32 varying vectors and accepts an
+integer `min()`). All 51 now compile and link on the SGX530 (Gecko patches
+0179–0186, firefox-n950 patches 29–36). What the SGX530 needs, measured:
+
+- At most 7 rows of varyings as GLSL ES 1.00 packs them, or 8 when every
+  varying is a vec4; it packs less tightly than the specification allows.
+  `tools/check_varyings.py` applies this to the vertex shaders wrench
+  dumps (`WRENCH_SHADER_DUMP`), so a PC finds what the phone would reject.
+- No integer `min()`, and loops bounded by a constant (cs_blur).
+- A program's two stages may not sample 8 textures between them: the link
+  fails with "Uniform variable sGpuBufferF type/precision does not match".
+  On ES 2.0 the primitive headers' integer half now sits in the float
+  header texture, so brush and text shaders sample one texture fewer.
+
+The varyings came down by passing less: values affine in the position are
+computed per vertex and interpolated (a gradient's stop factor, distances
+to a border's color and dash lines), what the fragment shader can derive
+is derived there (box shadow bounds and corners, a rounded mask's corner
+ellipses and planes, the YUV color matrix from bit depth, color space and
+format, brush_blend's color matrix from the filter op and amount), border
+colors travel as 8-bit pairs, small integers share one float, and the SVG
+filter shader drops the clip mask varyings it never used. Reftests under
+strict ES 2.0 on the PC are unchanged by all of this (transforms 32/55,
+one more than before).
+
+`WR_NO_EDGE_AA` leaves quads without edge anti-aliasing: transforms-simple
+then rasterises in 510 ms instead of 1583 (SWGL: 701), with jagged edges
+on rotated content only.
