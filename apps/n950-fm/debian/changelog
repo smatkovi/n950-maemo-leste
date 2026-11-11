@@ -1,3 +1,14 @@
+n950-fm (0.2.1) unstable; urgency=medium
+
+  * The chip's volume always reaches the chip at power on: the driver
+    restores its last volume, which the ALSA control "Volume" of the card
+    "N950 FM" can leave stale (alsactl restored 1 at boot), and the V4L2
+    control skipped the app's value as unchanged, so the radio stayed
+    silent. A neighbouring value goes first now. Power off no longer
+    leaves the volume at 1.
+
+ -- Sebastian Matkovich <sebastian.matkovich@gmail.com>  Wed, 11 Nov 2026 08:20:59 +0100
+
 n950-fm (0.2.0) unstable; urgency=medium
 
   * The FM sound: over the WL1273's I2S port (the sound card "N950 FM",

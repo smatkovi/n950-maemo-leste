@@ -59,14 +59,17 @@ def ctrl(fd, cid, value):
 def power_on(fd):
     fcntl.ioctl(fd, S_TUNER, Tuner(index=0, audmode=MODE_STEREO,
                                    rxsubchans=SUB_STEREO | SUB_RDS))
-    # the chip's own volume (radio-wl1273 restores the last one, which
-    # power_off() leaves at 1): the level you hear is PulseAudio's
+    # the chip's own volume (radio-wl1273 restores the driver's last one,
+    # which the ALSA control "Volume" of the card "N950 FM" may have left
+    # stale): the level you hear is PulseAudio's. The control acts only on
+    # a change of its cached value, so a neighbouring value first.
+    ctrl(fd, CID_AUDIO_VOLUME, 0x78b7)
     ctrl(fd, CID_AUDIO_VOLUME, 0x78b8)
 
 def power_off(fd):
-    # radio-wl1273: a volume of 0 puts the chip back into reset; the
-    # control only acts on a change
-    ctrl(fd, CID_AUDIO_VOLUME, 1)
+    # radio-wl1273: a volume of 0 puts the chip back into reset and keeps
+    # the volume before it; the control only acts on a change
+    ctrl(fd, CID_AUDIO_VOLUME, 0x78b8)
     ctrl(fd, CID_AUDIO_VOLUME, 0)
 
 def freq(fd):

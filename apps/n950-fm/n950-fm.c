@@ -108,11 +108,20 @@ static int seek(int up)
 
 /*
  * The chip's own volume, as Harmattan's FM radio app keeps it; the level
- * the user hears is PulseAudio's. power_off() leaves the driver's volume
- * at 1 (it turns the chip off with 1 then 0), and radio-wl1273 restores the
- * last volume when the chip comes back: set it after every power on.
+ * the user hears is PulseAudio's. radio-wl1273 restores the driver's last
+ * volume when the chip comes back, and that one can be stale: the ALSA
+ * control "Volume" of the card "N950 FM" sets it too (alsactl restores it
+ * at boot). The V4L2 control acts only on a change of its own cached
+ * value, so set a neighbouring value first: the chip always gets this one.
  */
 #define FM_CHIP_VOLUME	0x78b8
+
+static int set_volume(int value)
+{
+	struct v4l2_control c = { .id = V4L2_CID_AUDIO_VOLUME, .value = value };
+
+	return ioctl(fd, VIDIOC_S_CTRL, &c) ? errno : 0;
+}
 
 /* the receiver on: radio-wl1273 leaves reset here, with RDS */
 static int power_on(void)
@@ -121,26 +130,25 @@ static int power_on(void)
 		.index = 0, .audmode = V4L2_TUNER_MODE_STEREO,
 		.rxsubchans = V4L2_TUNER_SUB_STEREO | V4L2_TUNER_SUB_RDS,
 	};
-	struct v4l2_control c = {
-		.id = V4L2_CID_AUDIO_VOLUME, .value = FM_CHIP_VOLUME,
-	};
 
 	if (ioctl(fd, VIDIOC_S_TUNER, &t))
 		return errno;
-	return ioctl(fd, VIDIOC_S_CTRL, &c) ? errno : 0;
+	set_volume(FM_CHIP_VOLUME - 1);
+	return set_volume(FM_CHIP_VOLUME);
 }
 
 /*
  * The receiver off: a volume of 0 puts radio-wl1273's chip back into
- * reset. The control only acts on a change, so 1 first.
+ * reset; the driver keeps the volume before it for the next power on. The
+ * control only acts on a change, so from 0 go through FM_CHIP_VOLUME.
  */
 static void power_off(void)
 {
-	struct v4l2_control c = { .id = V4L2_CID_AUDIO_VOLUME, .value = 1 };
+	struct v4l2_control c = { .id = V4L2_CID_AUDIO_VOLUME };
 
-	ioctl(fd, VIDIOC_S_CTRL, &c);
-	c.value = 0;
-	ioctl(fd, VIDIOC_S_CTRL, &c);
+	if (ioctl(fd, VIDIOC_G_CTRL, &c) == 0 && c.value == 0)
+		set_volume(FM_CHIP_VOLUME);
+	set_volume(0);
 }
 
 /* ---- RDS: the station name (groups 0A/0B) and radio text (2A/2B) ---- */
