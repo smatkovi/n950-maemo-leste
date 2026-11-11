@@ -11,3 +11,11 @@ pref("ui.touch.radius.topmm", 6);
 pref("ui.touch.radius.bottommm", 4);
 pref("ui.touch_activation.duration_ms", 50);
 pref("layout.css.touch_action.enabled", true);
+
+// Touch input without Firefox's large touch-density toolbars: compact
+// density, which userChrome.css (from the launcher) slims further.
+pref("browser.touchmode.auto", false);
+pref("browser.uidensity", 1);
+pref("browser.toolbars.bookmarks.visibility", "never");
+pref("browser.tabs.inTitlebar", 0);
+pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);

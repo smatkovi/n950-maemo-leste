@@ -49,7 +49,7 @@ pref("ui.prefersReducedMotion", 1);
 // no AV1 (too heavy for the Cortex-A8): sites fall back to VP9 or H.264
 pref("media.av1.enabled", false);
 // 854x480 on 3.9 inches
-pref("layout.css.devPixelsPerPx", "1.5");
+pref("layout.css.devPixelsPerPx", "1.25");
 
 // Startup and background work: a blank start and new tab page, no Pocket,
 // no telemetry, studies or recommendations.

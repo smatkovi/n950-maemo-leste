@@ -4,4 +4,32 @@ export MOZ_APP_LAUNCHER=/usr/bin/firefox-n950
 # touch and multitouch through XInput 2: panning and pinch-zoom instead of
 # touches arriving as mouse clicks and drags (text selection)
 export MOZ_USE_XINPUT2=1
-exec /opt/firefox-n950/firefox-n950 "$@"
+
+# The page gets the screen: no tab strip, no bookmarks bar, a slim toolbar.
+# Firefox reads chrome/userChrome.css of the profile (n950-touch.js allows it).
+for d in "$HOME"/.config/mozilla/firefox/*.default* "$HOME"/.mozilla/firefox/*.default*; do
+	[ -d "$d" ] || continue
+	mkdir -p "$d/chrome"
+	cat > "$d/chrome/userChrome.css" <<'CSS'
+#TabsToolbar, #PersonalToolbar { visibility: collapse !important; }
+#nav-bar { min-height: 30px !important; }
+CSS
+done
+
+/opt/firefox-n950/firefox-n950 "$@" &
+pid=$!
+# Full screen, over the status bar, once the window is up; the toolbar
+# comes back from the top edge.
+(
+	for i in $(seq 1 120); do
+		sleep 2
+		kill -0 $pid 2>/dev/null || exit 0
+		w=$(wmctrl -lp 2>/dev/null | awk -v p=$pid '$3 == p { print $1; exit }')
+		if [ -n "$w" ]; then
+			sleep 2
+			wmctrl -i -r "$w" -b add,fullscreen
+			exit 0
+		fi
+	done
+) &
+wait $pid
