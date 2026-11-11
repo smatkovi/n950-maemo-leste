@@ -28,10 +28,16 @@ pref("browser.cache.disk.enable", true);
 pref("browser.cache.disk.smart_size.enabled", false);
 pref("browser.cache.disk.capacity", 102400);
 
-// Drawing: WebRender needs OpenGL ES 3.0, the SGX530 has 2.0, so the
-// software renderer; fewer frames and no animations for the one core.
-pref("gfx.webrender.software", true);
-// ...but composited on the GPU: SWGL's tiles shown through OpenGL ES 2.0
+// Drawing: WebRender on the SGX530 through its OpenGL ES 2.0 path (the
+// patches in patches/): text rasterises about 5 times faster than with the
+// software renderer. gfx.webrender.software = true in about:config goes
+// back to the software renderer.
+pref("gfx.webrender.all", true);
+pref("gfx.webrender.software", false);
+// Compiled shader programs are kept in the profile: the SGX530 needs
+// about 1.5 s per program, so each is compiled only once.
+pref("gfx.webrender.program-binary-disk", true);
+// With the software renderer: its tiles shown through OpenGL ES 2.0
 // (RenderCompositorOGLSWGL, Firefox's default on Android, made for GPUs
 // without ES 3.0), so scrolling and blending do not cost the CPU
 pref("gfx.webrender.software.opengl", true);

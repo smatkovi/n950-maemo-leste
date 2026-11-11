@@ -2,7 +2,7 @@
 # Cross-builds the slim Firefox ESR for the Nokia N950 (armhf) on an x86_64 PC.
 #
 #   SRC=<firefox-153.x source> SYSROOT=<armhf root> \
-#       bash browser/firefox-n950/build.sh [configure|build|package]
+#       bash browser/firefox-n950/build.sh [patch|configure|build|package]
 #
 # SRC: an unpacked Firefox ESR source (archive.mozilla.org, checked against
 # its SHA512SUMS). SYSROOT: a Leste/Devuan excalibur armhf root with GTK 3,
@@ -32,8 +32,14 @@ export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=none
 
 cd "$SRC"
 case ${1:-build} in
+patch)
+	# WebRender's OpenGL ES 2.0 path (PowerVR SGX530), once per source tree
+	for p in "$HERE"/patches/*.patch; do
+		patch -p1 --forward --no-backup-if-mismatch -s < "$p"
+	done
+	;;
 configure) ./mach configure ;;
 build) ./mach build ;;
 package) ./mach package ;;
-*) echo "usage: build.sh [configure|build|package]" >&2; exit 2 ;;
+*) echo "usage: build.sh [patch|configure|build|package]" >&2; exit 2 ;;
 esac
