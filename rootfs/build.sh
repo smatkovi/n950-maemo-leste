@@ -175,6 +175,9 @@ in_target "apt-get -q -y install openmediaplayer"
 # WebKitGTK that is already there for Hildon. Firefox ESR stays as the fallback
 # (launchers in rootfs/overlay/usr/local/bin: one process, touch, full screen).
 in_target "apt-get -q -y --no-install-recommends install epiphany-browser"
+# Session helpers: xbindkeys for Fn+Backspace (back to the task switcher,
+# /etc/n950/xbindkeysrc), wmctrl for full-screen browser windows.
+in_target "apt-get -q -y --no-install-recommends install xbindkeys wmctrl"
 GH=https://github.com/smatkovi
 for deb in osso-chess-ui/releases/download/v1.8.3-2%2Bleste1/osso-chess-ui_1.8.3-2+leste1_armhf.deb \
 	osso-lmarbles/releases/download/v1.6.38-2%2Bleste1/osso-lmarbles_1.6.38-2+leste1_armhf.deb; do

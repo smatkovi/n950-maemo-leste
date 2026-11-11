@@ -1,0 +1,5 @@
+# Fn+Backspace (XF86TaskPane, see Xsession.post/26n950-keyboard): the
+# application goes to the background and hildon-desktop shows the task
+# switcher, as on Harmattan; also out of a full-screen window.
+"dbus-send --session --type=signal /com/nokia/hildon_desktop com.nokia.hildon_desktop.exit_app_view"
+    XF86TaskPane

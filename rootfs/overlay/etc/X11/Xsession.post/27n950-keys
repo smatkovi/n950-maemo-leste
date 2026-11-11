@@ -1,0 +1,3 @@
+# Session key bindings of the N950 (/etc/n950/xbindkeysrc), after
+# 26n950-keyboard has loaded the keymap.
+command -v xbindkeys >/dev/null && xbindkeys -f /etc/n950/xbindkeysrc

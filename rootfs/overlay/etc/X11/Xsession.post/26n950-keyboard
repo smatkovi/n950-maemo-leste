@@ -18,6 +18,9 @@ xkb_keymap {
 		// these keysyms, without them both read as "louder"
 		key <VOL-> { [ XF86AudioLowerVolume ] };
 		key <VOL+> { [ XF86AudioRaiseVolume ] };
+		// Fn+Backspace: XF86TaskPane, which 27n950-keys turns into
+		// "back to the task switcher", as Harmattan does it
+		key <BKSP> { [ BackSpace, Delete, XF86TaskPane, Delete ] };
 	};
 	xkb_geometry { include "pc(pc105)" };
 };
