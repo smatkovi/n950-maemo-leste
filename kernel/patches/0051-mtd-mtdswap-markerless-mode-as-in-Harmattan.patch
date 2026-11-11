@@ -1,0 +1,72 @@
+From b9dd669d0806450edece3493ee4e6c481a8ef791 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Wed, 11 Nov 2026 13:57:16 +0100
+Subject: [PATCH 51/52] mtd: mtdswap: markerless mode, as in Harmattan
+
+The N950's 4 KiB-page OneNAND (Samsung, version 0x0232) cannot program
+a page's OOB and its data in separate operations: the chip's ECC covers
+both, so the CLEAN and DIRTY markers mtdswap writes to the OOB of the
+first two pages of each block turn the later data writes of those pages
+into uncorrectable ECC errors. mtdswap then marks the block bad and
+tries the next one, until every block of the partition is marked bad.
+
+Nokia's mtdswap in Harmattan keeps no state in the OOB at all
+(markerless): every block is erased before use, and erase counts start
+random. Add that as the parameter markerless=1.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/mtd/mtdswap.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/mtd/mtdswap.c b/drivers/mtd/mtdswap.c
+index 42ff7deac..c1cb84ff4 100644
+--- a/drivers/mtd/mtdswap.c
++++ b/drivers/mtd/mtdswap.c
+@@ -25,6 +25,7 @@
+ #include <linux/seq_file.h>
+ #include <linux/device.h>
+ #include <linux/math64.h>
++#include <linux/random.h>
+ 
+ #define MTDSWAP_PREFIX "mtdswap"
+ 
+@@ -175,6 +176,13 @@ module_param(spare_eblocks, uint, 0444);
+ MODULE_PARM_DESC(spare_eblocks, "Percentage of spare erase blocks for "
+ 		"garbage collection (default 10%)");
+ 
++static bool markerless; /* false */
++module_param(markerless, bool, 0444);
++MODULE_PARM_DESC(markerless,
++		"Keep no state in the OOB area: every block is erased before "
++		"use. For flash that cannot program a page's OOB and its data "
++		"separately (Nokia N950/N9 OneNAND)");
++
+ static bool header; /* false */
+ module_param(header, bool, 0444);
+ MODULE_PARM_DESC(header,
+@@ -332,6 +340,11 @@ static int mtdswap_read_markers(struct mtdswap_dev *d, struct swap_eb *eb)
+ 	if (mtd_can_have_bb(d->mtd) && mtd_block_isbad(d->mtd, offset))
+ 		return MTDSWAP_SCANNED_BAD;
+ 
++	if (markerless) {
++		eb->erase_count = get_random_u32_below(128);
++		return MTDSWAP_SCANNED_DIRTY;
++	}
++
+ 	ops.ooblen = 2 * d->mtd->oobavail;
+ 	ops.oobbuf = d->oob_buf;
+ 	ops.ooboffs = 0;
+@@ -373,6 +386,9 @@ static int mtdswap_write_marker(struct mtdswap_dev *d, struct swap_eb *eb,
+ 	loff_t offset;
+ 	struct mtd_oob_ops ops = { };
+ 
++	if (markerless)
++		return 0;
++
+ 	ops.ooboffs = 0;
+ 	ops.oobbuf = (uint8_t *)&n;
+ 	ops.mode = MTD_OPS_AUTO_OOB;
+-- 
+2.56.0
+

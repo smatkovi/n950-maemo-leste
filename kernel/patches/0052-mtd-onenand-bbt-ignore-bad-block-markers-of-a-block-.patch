@@ -1,0 +1,60 @@
+From cb4329a266779bd4561708bacad475dd42e503a9 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Wed, 11 Nov 2026 13:57:16 +0100
+Subject: [PATCH 52/52] mtd: onenand: bbt: ignore bad block markers of a block
+ range
+
+onenand_erase() refuses blocks the memory-based bad block table marks
+bad, so blocks wrongly marked bad (here by mtdswap, see the markerless
+patch) cannot be erased again. scrub_first and scrub_last make the next
+scan (a driver bind) ignore the markers of that range; erasing the
+blocks then clears them. The table is in memory only: the parameters
+write nothing themselves.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/mtd/nand/onenand/onenand_bbt.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mtd/nand/onenand/onenand_bbt.c b/drivers/mtd/nand/onenand/onenand_bbt.c
+index d7fe35bc4..6f9733d4e 100644
+--- a/drivers/mtd/nand/onenand/onenand_bbt.c
++++ b/drivers/mtd/nand/onenand/onenand_bbt.c
+@@ -15,6 +15,16 @@
+ #include <linux/mtd/mtd.h>
+ #include <linux/mtd/onenand.h>
+ #include <linux/export.h>
++#include <linux/moduleparam.h>
++
++static unsigned int scrub_first, scrub_last;
++module_param(scrub_first, uint, 0644);
++MODULE_PARM_DESC(scrub_first,
++		 "First eraseblock whose bad block marker the next scan ignores, "
++		 "so that it can be erased again (0: none)");
++module_param(scrub_last, uint, 0644);
++MODULE_PARM_DESC(scrub_last,
++		 "Last eraseblock whose bad block marker the next scan ignores");
+ 
+ /**
+  * check_short_pattern - [GENERIC] check if a pattern is in the buffer
+@@ -85,10 +95,16 @@ static int create_bbt(struct mtd_info *mtd, uint8_t *buf, struct nand_bbt_descr
+ 	ops.oobbuf = buf;
+ 	ops.len = ops.ooboffs = ops.retlen = ops.oobretlen = 0;
+ 
++	if (scrub_first)
++		pr_warn("OneNAND: bad block markers of eraseblocks %u-%u ignored\n",
++			scrub_first, scrub_last);
++
+ 	for (i = startblock; i < numblocks; ) {
+ 		int ret;
++		bool scrub = scrub_first && (i >> 1) >= scrub_first &&
++			     (i >> 1) <= scrub_last;
+ 
+-		for (j = 0; j < len; j++) {
++		for (j = 0; j < len && !scrub; j++) {
+ 			/* No need to read pages fully,
+ 			 * just read required OOB bytes */
+ 			ret = onenand_bbt_read_oob(mtd,
+-- 
+2.56.0
+

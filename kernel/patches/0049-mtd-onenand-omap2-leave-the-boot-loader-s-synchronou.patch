@@ -1,0 +1,103 @@
+From 9c825cf5f6188a51c09f2a48da2f0f3e336d0abd Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Wed, 11 Nov 2026 13:57:15 +0100
+Subject: [PATCH 49/52] mtd: onenand: omap2: leave the boot loader's
+ synchronous mode
+
+The Nokia N950's boot loader (NOLO) leaves the OneNAND in synchronous
+read and write mode (SYS_CFG1 0xe6c6). The GPMC is reset before the
+driver probes and runs asynchronous timings, so register writes no
+longer reach the chip: onenand_scan()'s READID command is lost and it
+reports "Manufacturer: Unknown (0xab6c)", the BootRAM's content.
+Asynchronous reads still work.
+
+With "nokia,boot-gpmc-config" (the boot loader's CONFIG1-6), clear
+the synchronous bits before the scan: by an asynchronous write if that
+takes, else under the boot loader's configuration for that one write.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/mtd/ti,gpmc-onenand.yaml         | 10 +++++
+ drivers/mtd/nand/onenand/onenand_omap2.c      | 38 +++++++++++++++++++
+ 2 files changed, 48 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/mtd/ti,gpmc-onenand.yaml b/Documentation/devicetree/bindings/mtd/ti,gpmc-onenand.yaml
+index 7d3ace4f5..4b2e09063 100644
+--- a/Documentation/devicetree/bindings/mtd/ti,gpmc-onenand.yaml
++++ b/Documentation/devicetree/bindings/mtd/ti,gpmc-onenand.yaml
+@@ -34,6 +34,16 @@ properties:
+   int-gpios:
+     description: GPIO specifier for the INT pin.
+ 
++  nokia,boot-gpmc-config:
++    $ref: /schemas/types.yaml#/definitions/uint32-array
++    minItems: 6
++    maxItems: 6
++    description:
++      GPMC_CS_CONFIG1 to GPMC_CS_CONFIG6 as the boot loader programs them.
++      If the boot loader leaves the chip in synchronous write mode, the
++      driver clears that mode under this configuration before it probes
++      the chip in asynchronous mode.
++
+ patternProperties:
+   "@[0-9a-f]+$":
+     $ref: /schemas/mtd/partitions/partition.yaml
+diff --git a/drivers/mtd/nand/onenand/onenand_omap2.c b/drivers/mtd/nand/onenand/onenand_omap2.c
+index db50769b0..d4a505eba 100644
+--- a/drivers/mtd/nand/onenand/onenand_omap2.c
++++ b/drivers/mtd/nand/onenand/onenand_omap2.c
+@@ -67,6 +67,42 @@ static inline void write_reg(struct omap2_onenand *c, unsigned short value,
+ 	writew(value, c->onenand.base + reg);
+ }
+ 
++/*
++ * A boot loader may leave the chip in synchronous write mode, which needs
++ * a synchronous GPMC configuration for writes to reach it. Asynchronous
++ * reads still work. Clear the mode, if needed under the boot loader's own
++ * configuration ("nokia,boot-gpmc-config"), so onenand_scan() finds the
++ * chip with asynchronous GPMC timings.
++ */
++static void omap2_onenand_leave_boot_sync(struct omap2_onenand *c)
++{
++	const u16 sync = ONENAND_SYS_CFG1_SYNC_READ | ONENAND_SYS_CFG1_SYNC_WRITE;
++	struct device *dev = &c->pdev->dev;
++	u32 config[GPMC_CS_NUM_CONFIG];
++	u16 cfg, now;
++
++	if (of_property_read_u32_array(dev->of_node, "nokia,boot-gpmc-config",
++				       config, ARRAY_SIZE(config)))
++		return;
++
++	cfg = read_reg(c, ONENAND_REG_SYS_CFG1);
++	if (cfg == 0xffff || !(cfg & sync))
++		return;
++
++	write_reg(c, cfg & ~sync, ONENAND_REG_SYS_CFG1);
++	now = read_reg(c, ONENAND_REG_SYS_CFG1);
++	if (now & sync) {
++		if (gpmc_cs_swap_config(c->gpmc_cs, config))
++			return;
++		write_reg(c, cfg & ~sync, ONENAND_REG_SYS_CFG1);
++		gpmc_cs_swap_config(c->gpmc_cs, config);
++		now = read_reg(c, ONENAND_REG_SYS_CFG1);
++	}
++
++	dev_info(dev, "left the boot loader's synchronous mode: SYS_CFG1 %04x -> %04x\n",
++		 cfg, now);
++}
++
+ static int omap2_onenand_set_cfg(struct omap2_onenand *c,
+ 				 bool sr, bool sw,
+ 				 int latency, int burst_len)
+@@ -520,6 +556,8 @@ static int omap2_onenand_probe(struct platform_device *pdev)
+ 		 c->gpmc_cs, c->phys_base, c->onenand.base,
+ 		 c->dma_chan ? "DMA" : "PIO");
+ 
++	omap2_onenand_leave_boot_sync(c);
++
+ 	r = onenand_scan(&c->mtd, 1);
+ 	if (r < 0)
+ 		goto err_release_dma;
+-- 
+2.56.0
+

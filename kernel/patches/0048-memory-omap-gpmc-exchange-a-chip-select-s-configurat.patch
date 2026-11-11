@@ -1,0 +1,92 @@
+From 797bd14a3993753019ef77046fe126f8b163dd6c Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Wed, 11 Nov 2026 13:57:15 +0100
+Subject: [PATCH 48/52] memory: omap-gpmc: exchange a chip select's
+ configuration
+
+gpmc_cs_swap_config() programs CONFIG1-6 of a chip select with given
+values and hands back the previous ones, with the chip select disabled
+meanwhile. A driver can so reach its device for a moment in the
+configuration a boot loader left it in, and restore its own.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/memory/omap-gpmc.c | 24 ++++++++++++++++++++++++
+ include/linux/omap-gpmc.h  | 19 +++++++++++++++++++
+ 2 files changed, 43 insertions(+)
+
+diff --git a/drivers/memory/omap-gpmc.c b/drivers/memory/omap-gpmc.c
+index d9e13c1f9..9ddf0798a 100644
+--- a/drivers/memory/omap-gpmc.c
++++ b/drivers/memory/omap-gpmc.c
+@@ -1291,6 +1291,30 @@ int gpmc_omap_onenand_set_timings(struct device *dev, int cs, int freq,
+ }
+ EXPORT_SYMBOL_GPL(gpmc_omap_onenand_set_timings);
+ 
++int gpmc_cs_swap_config(int cs, u32 config[GPMC_CS_NUM_CONFIG])
++{
++	int i, enabled;
++	u32 old;
++
++	if (cs < 0 || cs >= gpmc_cs_num)
++		return -EINVAL;
++
++	enabled = gpmc_cs_mem_enabled(cs);
++	if (enabled)
++		gpmc_cs_disable_mem(cs);
++	for (i = 0; i < GPMC_CS_NUM_CONFIG; i++) {
++		old = gpmc_cs_read_reg(cs, GPMC_CS_CONFIG1 + 4 * i);
++		gpmc_cs_write_reg(cs, GPMC_CS_CONFIG1 + 4 * i, config[i]);
++		config[i] = old;
++	}
++	if (enabled)
++		gpmc_cs_enable_mem(cs);
++	gpmc_cs_read_reg(cs, GPMC_CS_CONFIG7);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(gpmc_cs_swap_config);
++
+ static int gpmc_irq_endis(unsigned long hwirq, bool endis)
+ {
+ 	u32 regval;
+diff --git a/include/linux/omap-gpmc.h b/include/linux/omap-gpmc.h
+index 263b915df..baa0fba36 100644
+--- a/include/linux/omap-gpmc.h
++++ b/include/linux/omap-gpmc.h
+@@ -44,6 +44,18 @@ int gpmc_omap_onenand_set_timings(struct device *dev, int cs, int freq,
+ 				  int latency,
+ 				  struct gpmc_onenand_info *info);
+ 
++#define GPMC_CS_NUM_CONFIG	6
++
++/**
++ * gpmc_cs_swap_config - exchange a chip select's CONFIG1-6 registers
++ * @cs:     Chip Select Region
++ * @config: the six values to program; receives the previous ones
++ *
++ * For a driver that has to reach its device in the configuration a boot
++ * loader left it in for a moment (and calls this again to restore).
++ */
++int gpmc_cs_swap_config(int cs, u32 config[GPMC_CS_NUM_CONFIG]);
++
+ #else
+ static inline struct gpmc_nand_ops *gpmc_omap_get_nand_ops(struct gpmc_nand_regs *regs,
+ 							   int cs)
+@@ -58,6 +70,13 @@ int gpmc_omap_onenand_set_timings(struct device *dev, int cs, int freq,
+ {
+ 	return -EINVAL;
+ }
++
++#define GPMC_CS_NUM_CONFIG	6
++
++static inline int gpmc_cs_swap_config(int cs, u32 config[GPMC_CS_NUM_CONFIG])
++{
++	return -EINVAL;
++}
+ #endif /* CONFIG_OMAP_GPMC */
+ 
+ extern int gpmc_calc_timings(struct gpmc_timings *gpmc_t,
+-- 
+2.56.0
+
