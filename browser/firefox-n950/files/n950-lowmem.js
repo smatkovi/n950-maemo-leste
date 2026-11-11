@@ -39,6 +39,9 @@ pref("gfx.webrender.software.opengl", true);
 // ("blocked by platform"), and with it the OpenGL compositor that lets the
 // SGX530 composite SWGL's tiles.
 pref("layers.acceleration.force-enabled", true);
+// The SGX530's driver rejects robust contexts ("Unsupported context flags:
+// 0x4"); Gecko falls back after several failed attempts.
+pref("gfx.webrender.prefer-robustness", false);
 pref("layout.frame_rate", 30);
 pref("general.smoothScroll", false);
 pref("toolkit.cosmeticAnimations.enabled", false);
