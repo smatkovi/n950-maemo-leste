@@ -21,7 +21,9 @@ mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/../obj-embedlite-n950
 ac_add_options --disable-bootstrap
 export MOZILLA_OFFICIAL=1
 
-# target: Cortex-A8, ARMv7-A, NEON, hard float (Leste is armhf), Thumb-2
+# target: ARMv7-A, NEON, hard float (Leste is armhf), Thumb-2, tuned for the
+# Cortex-A8 (-mtune only: -mcpu would override the ARMv8 flags NSS gives its
+# runtime-selected crypto files)
 ac_add_options --target=arm-unknown-linux-gnueabihf
 ac_add_options --with-arch=armv7-a
 ac_add_options --with-fpu=neon
@@ -34,8 +36,8 @@ export CC=clang
 export CXX=clang++
 export HOST_CC=clang
 export HOST_CXX=clang++
-export CFLAGS="-mcpu=cortex-a8 -mtune=cortex-a8"
-export CXXFLAGS="-mcpu=cortex-a8 -mtune=cortex-a8 -DUSE_ANDROID_OMTC_HACKS=1 -DUSE_OZONE=1 -DMOZ_UA_OS_AGNOSTIC=1"
+export CFLAGS="-mtune=cortex-a8"
+export CXXFLAGS="-mtune=cortex-a8 -DUSE_ANDROID_OMTC_HACKS=1 -DUSE_OZONE=1 -DMOZ_UA_OS_AGNOSTIC=1"
 export RUSTFLAGS="-C target-cpu=cortex-a8"
 export RUSTC="$RUSTUP_TOOLCHAIN_BIN/rustc"
 export CARGO="$RUSTUP_TOOLCHAIN_BIN/cargo"
@@ -82,3 +84,4 @@ ac_add_options --disable-parental-controls
 ac_add_options --disable-pref-extensions
 # EmbedLite runs Gecko in one process: no content process to sandbox
 ac_add_options --disable-sandbox
+ac_add_options --disable-qt-geolocation
