@@ -26,10 +26,16 @@ static void writeUserPrefs(bool edgeAa)
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
         return;
     QTextStream out(&file);
-    out << "user_pref(\"gfx.webrender.all\", true);\n"
+    // EmbedLite stores layers.acceleration.disabled in prefs.js; a value left
+    // from an older engine that always ran in software must not win
+    out << "user_pref(\"layers.acceleration.disabled\", false);\n"
+        << "user_pref(\"layers.offmainthreadcomposition.force-basic\", false);\n"
+        << "user_pref(\"gfx.webrender.all\", true);\n"
         << "user_pref(\"gfx.webrender.software\", false);\n"
         << "user_pref(\"gfx.webrender.program-binary-disk\", true);\n"
-        << "user_pref(\"gfx.webrender.edge-aa\", " << (edgeAa ? "true" : "false") << ");\n";
+        << "user_pref(\"gfx.webrender.edge-aa\", " << (edgeAa ? "true" : "false") << ");\n"
+        // full frames into the offscreen buffers Qt shows
+        << "user_pref(\"gfx.webrender.max-partial-present-rects\", 0);\n";
 }
 
 int main(int argc, char **argv)

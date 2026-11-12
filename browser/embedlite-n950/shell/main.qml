@@ -64,6 +64,9 @@ Rectangle {
         anchors { left: parent.left; right: parent.right; top: bar.bottom; bottom: parent.bottom }
         active: true
         focus: true
+        // The N950's screen is landscape; qtmozembed otherwise sizes Gecko's
+        // window for a portrait-native (Sailfish) screen, transposed.
+        orientation: Qt.LandscapeOrientation
         Component.onCompleted: web.url = startUrl
     }
 }
