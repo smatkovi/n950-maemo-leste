@@ -132,8 +132,16 @@ static void run(GLuint prog, GLuint out_fb, GLenum format, int bpp, int size, in
 	memset(block, 100, sizeof block);
 	for (i = 0; i < 8; i++)
 		glTexSubImage2D(GL_TEXTURE_2D, 0, 32 + 16 * i, 32, 16, 16, format, GL_UNSIGNED_BYTE, block);
+	/* the second draw maps texel (0..size/64) to output pixel 0: what it saw of A */
+	glClearColor(0, 0, 0, 0);
+	glClear(GL_COLOR_BUFFER_BIT);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glFinish();
+	{
+		unsigned char seen[4];
+		glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, seen);
+		printf("draw saw A=%3d  ", seen[0]);
+	}
 
 	printf("%-5s %4dx%-4d %-9s %-7s A=%3d (200)  B=%3d (100)  C=%3d (%s)\n",
 	       bpp == 4 ? "RGBA" : "RED", size, size, finish ? "finish" : "no finish",
