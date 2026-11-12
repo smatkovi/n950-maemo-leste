@@ -307,3 +307,21 @@ first frame on the SGX530 compiles every program it needs, which takes
 minutes, so a run stopped before that frame ends saves nothing and the
 next start compiles again: the engine needs a precompiled cache shipped
 with it, as firefox-n950 has.
+
+Later that day, measured with the shell's synthetic swipes
+(`EMBEDLITE_SHELL_SCROLLTEST`):
+
+- EmbedLite's swap chain built a new framebuffer, texture and EGLImage for
+  every frame (its pool compared color spaces the EGLImage factory does not
+  have) and destroyed the previous one while Qt could still draw it: white
+  views, the PVR driver crash in `~MozFramebuffer`, seconds per frame.
+  Patch 0194 keeps three surfaces; frames in the same test rose from under
+  25 to about 90-110.
+- What Qt draws is exactly Gecko's frame (`QMOZEMBED_DUMP` in qtmozembed
+  against `EL_DUMP`). The white that remains while scrolling is
+  checkerboarding: the compositor renders in bursts at about 30 ms a frame,
+  the main thread needs seconds to paint the new display port.
+- The PowerVR parameter buffer (`/etc/powervr.d/embedlite-shell.ini`,
+  `ParamBufferSize` from 64 KB to 16 MB, as the N9 sets it per application)
+  changed nothing: about 16 frames on a local test page for every size, no
+  "TA went out of Mem and SPM" kick in any run.
