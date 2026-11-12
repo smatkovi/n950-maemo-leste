@@ -7,6 +7,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QQmlContext>
+#include <QQmlEngine>
 #include <QTextStream>
 #include <QQuickView>
 #include <QTimer>
@@ -69,6 +70,8 @@ int main(int argc, char **argv)
 
     QQuickView view;
     view.setResizeMode(QQuickView::SizeRootObjectToView);
+    // the toolbar's close button (Qt.quit()): the shell is full screen
+    QObject::connect(view.engine(), &QQmlEngine::quit, &app, &QGuiApplication::quit);
     view.rootContext()->setContextProperty(QStringLiteral("startUrl"), start);
     // EMBEDLITE_SHELL_SCROLLTEST=<seconds>:<swipes>: after a while, swipes up
     // over the page with synthetic touch input, one swipe every 2 s

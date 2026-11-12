@@ -32,7 +32,15 @@ Rectangle {
         }
 
         Rectangle {
-            anchors { left: buttons.right; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 6; rightMargin: 6 }
+            id: closeButton
+            anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 6 }
+            width: 40; height: 36; radius: 4; color: "#404040"
+            Text { anchors.centerIn: parent; text: "✕"; color: "white"; font.pixelSize: 22 }
+            MouseArea { anchors.fill: parent; onClicked: Qt.quit() }
+        }
+
+        Rectangle {
+            anchors { left: buttons.right; right: closeButton.left; verticalCenter: parent.verticalCenter; leftMargin: 6; rightMargin: 6 }
             height: 36; radius: 4; color: "white"
             TextInput {
                 id: address
