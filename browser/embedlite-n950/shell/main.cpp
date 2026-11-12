@@ -41,6 +41,12 @@ static void writeUserPrefs(bool edgeAa)
         // pages (the N9's browser did the same with an Android one)
         << "user_pref(\"general.useragent.override\", \"Mozilla/5.0 (Android 10; "
            "Mobile; rv:153.0) Gecko/153.0 Firefox/153.0\");\n"
+        // and the rest of what Firefox for Android reports, so that scripts
+        // comparing navigator with the user agent (bot checks such as
+        // Cloudflare's) see one consistent browser
+        << "user_pref(\"general.platform.override\", \"Linux armv81\");\n"
+        << "user_pref(\"general.oscpu.override\", \"Linux armv81\");\n"
+        << "user_pref(\"general.appversion.override\", \"5.0 (Android 10)\");\n"
         << "user_pref(\"gfx.webrender.all\", true);\n"
         << "user_pref(\"gfx.webrender.software\", false);\n"
         << "user_pref(\"gfx.webrender.program-binary-disk\", true);\n"
