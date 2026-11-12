@@ -338,3 +338,17 @@ Later that day, measured with the shell's synthetic swipes
 - Still open: after swipes Qt stops drawing new frames while Gecko goes on
   presenting them (`EMBEDLITE_SHELL_FBDUMP` in the shell reads back what Qt
   rendered), and the frames Qt last shows are shifted down, then white.
+- Text vanishing while scrolling: WebRender's profiler overlay
+  (`gfx.webrender.debug.profiler`, counters in `-ui`) showed only the glyphs
+  rasterized in that frame being drawn. `tools/gles2-subimage.c` found the
+  SGX530 losing what an R8 (GL_RED) texture got by glTexSubImage2D once
+  something is drawn into it; RGBA keeps everything, and plain sub-uploads
+  keep R8 contents too. Which R8 write WebRender's glyph pages hit is still
+  open (compaction alone, patch 0196, did not cure it), but BGRA8 glyphs
+  (patch 0197, as WebRender already does for AMD Radeon RX) keep every
+  glyph, and their uploads take 1-3 ms instead of 100-200 ms: the driver's
+  slow byte-by-byte twiddling is its R8 path. The twiddle loop is gone from
+  the profile. firefox-n950 patches 43-44.
+- The view sliding down and turning white while scrolling was qtmozembed
+  taking `layout.css.devPixelsPerPx` (-1 unless set) as the pixel ratio
+  (qtmozembed n950 32db97f).
