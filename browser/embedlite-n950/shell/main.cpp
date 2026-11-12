@@ -4,6 +4,8 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QQmlContext>
 #include <QTextStream>
 #include <QQuickView>
@@ -93,6 +95,27 @@ int main(int argc, char **argv)
         const QString file = colon > 0 ? grab.left(colon) : grab;
         const int seconds = colon > 0 ? grab.mid(colon + 1).toInt() : 60;
         QTimer::singleShot(seconds * 1000, [&view, file] { view.grabWindow().save(file); });
+    }
+    // EMBEDLITE_SHELL_FBDUMP=DIR: each frame Qt renders, read back from
+    // its framebuffer into DIR/fb_N.ppm (N cycling 0-7)
+    const QByteArray fbDump = qgetenv("EMBEDLITE_SHELL_FBDUMP");
+    if (!fbDump.isEmpty()) {
+        QObject::connect(&view, &QQuickWindow::afterRendering, &view, [&view, fbDump] {
+            static int frame = 0;
+            ++frame;
+            const int w = view.width() * view.devicePixelRatio();
+            const int h = view.height() * view.devicePixelRatio();
+            QByteArray pixels(w * h * 4, 0);
+            QOpenGLContext::currentContext()->functions()->glReadPixels(
+                0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            const QString path = QString::fromLocal8Bit(fbDump) + QStringLiteral("/fb_%1.ppm").arg(frame % 8);
+            QFile file(path);
+            if (file.open(QIODevice::WriteOnly)) {
+                file.write(QStringLiteral("P6\n%1 %2\n255\n").arg(w).arg(h).toLatin1());
+                for (int i = 0; i < w * h; ++i)
+                    file.write(pixels.constData() + i * 4, 3);
+            }
+        }, Qt::DirectConnection);
     }
     return app.exec();
 }

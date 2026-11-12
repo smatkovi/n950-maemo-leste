@@ -325,3 +325,16 @@ Later that day, measured with the shell's synthetic swipes
   `ParamBufferSize` from 64 KB to 16 MB, as the N9 sets it per application)
   changed nothing: about 16 frames on a local test page for every size, no
   "TA went out of Mem and SPM" kick in any run.
+- Where the render thread's time went, by `perf` on the N950 (linux-perf
+  from Devuan works with the 6.18 kernel): 73 % in one loop of the PVR
+  driver that rearranges ("twiddles") a texture byte by byte, called from
+  `glTexSubImage2D` with the whole texture's size, 2048x2048, for each new
+  glyph or image WebRender put into its texture cache. The content waited
+  on those frames ("Hit max pending transaction limit" in the refresh
+  driver log) for 3-5 s each. Patch 0195 (firefox-n950 patch 42) gives
+  ES 2.0 contexts 512x512 cache pages: 13 % left in the loop.
+  Render-to-texture sizes that are no power of two cost the same as
+  power-of-two ones (`gles2-rtt WxH ...`), so that is no way around it.
+- Still open: after swipes Qt stops drawing new frames while Gecko goes on
+  presenting them (`EMBEDLITE_SHELL_FBDUMP` in the shell reads back what Qt
+  rendered), and the frames Qt last shows are shifted down, then white.

@@ -9,7 +9,7 @@
  * Renders into framebuffers; the window is never mapped.
  *
  * Build:  cc -O2 -o gles2-rtt gles2-rtt.c -lEGL -lGLESv2 -lX11
- * Run:    DISPLAY=:0 ./gles2-rtt
+ * Run:    DISPLAY=:0 ./gles2-rtt [WxH ...]   (default 256x256 to 2048x2048)
  */
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
@@ -42,7 +42,7 @@ static GLuint program(const char *vs, const char *fs)
 	return p;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	static const EGLint cfg_attr[] = {
 		EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE,
@@ -59,12 +59,18 @@ int main(void)
 	EGLSurface surf;
 	Window win;
 	GLuint solid, tex_prog, out_fbo, out_rb;
-	int sizes[] = { 256, 512, 1024, 2048 };
-	int si, mode, i;
+	int widths[32] = { 256, 512, 1024, 2048 }, heights[32] = { 256, 512, 1024, 2048 };
+	int count = 4, si, mode, i;
 	PFNGLDISCARDFRAMEBUFFEREXTPROC discard =
 		(PFNGLDISCARDFRAMEBUFFEREXTPROC)eglGetProcAddress("glDiscardFramebufferEXT");
 	static const GLenum color = GL_COLOR_EXT;
 
+	if (argc > 1) {
+		count = 0;
+		for (i = 1; i < argc && count < 32; i++)
+			if (sscanf(argv[i], "%dx%d", &widths[count], &heights[count]) == 2)
+				count++;
+	}
 	win = XCreateSimpleWindow(x, DefaultRootWindow(x), 0, 0, 64, 64, 0, 0, 0);
 	d = eglGetDisplay((EGLNativeDisplayType)x);
 	eglInitialize(d, NULL, NULL);
@@ -90,10 +96,10 @@ int main(void)
 	glEnableVertexAttribArray(0);
 
 	printf("ms per round (tiny draw into the texture, then a tiny read of it):\n");
-	printf("%6s %10s %10s %10s %10s %10s %10s\n", "size", "draw", "clr+draw",
+	printf("%10s %10s %10s %10s %10s %10s %10s\n", "size", "draw", "clr+draw",
 	       "draw+smp", "clr+d+smp", "disc+d+smp", "d+smp*2");
-	for (si = 0; si < 4; si++) {
-		int sz = sizes[si];
+	for (si = 0; si < count; si++) {
+		int w = widths[si], h = heights[si];
 		GLuint tex, fbo;
 		glGenTextures(1, &tex);
 		glBindTexture(GL_TEXTURE_2D, tex);
@@ -101,20 +107,20 @@ int main(void)
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, sz, sz, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 		glGenFramebuffers(1, &fbo);
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
 		glClear(GL_COLOR_BUFFER_BIT);
 		glFinish();
-		printf("%6d", sz);
+		printf("%5dx%-4d", w, h);
 		for (mode = 0; mode < 6; mode++) {
 			double t0;
 			for (i = 0; i < 6; i++) {
 				if (i == 1)
 					t0 = now_ms();
 				glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-				glViewport(0, 0, sz, sz);
+				glViewport(0, 0, w, h);
 				if (mode == 1 || mode == 3)
 					glClear(GL_COLOR_BUFFER_BIT);
 				if (mode == 4 && discard)
