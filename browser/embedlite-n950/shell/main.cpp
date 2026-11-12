@@ -40,6 +40,10 @@ static void writeUserPrefs(bool edgeAa)
         << "user_pref(\"gfx.webrender.all\", true);\n"
         << "user_pref(\"gfx.webrender.software\", false);\n"
         << "user_pref(\"gfx.webrender.program-binary-disk\", true);\n"
+        // glyphs and images through a staging texture, copied by draws into
+        // the cache: on the SGX530 text stayed in place far more often
+        << "user_pref(\"gfx.webrender.batched-texture-uploads\", true);\n"
+        << "user_pref(\"gfx.webrender.draw-calls-for-texture-copy\", true);\n"
         << "user_pref(\"gfx.webrender.edge-aa\", " << (edgeAa ? "true" : "false") << ");\n"
         // full frames into the offscreen buffers Qt shows
         << "user_pref(\"gfx.webrender.max-partial-present-rects\", 0);\n";
@@ -81,6 +85,8 @@ int main(int argc, char **argv)
                                            scrollTest.value(0).toInt());
     view.rootContext()->setContextProperty(QStringLiteral("scrollTestSwipes"),
                                            scrollTest.value(1).toInt());
+    view.rootContext()->setContextProperty(QStringLiteral("pinchTestStart"),
+                                           qEnvironmentVariableIntValue("EMBEDLITE_SHELL_PINCHTEST"));
 
     QTimer::singleShot(0, [&] {
         context->runEmbedding();

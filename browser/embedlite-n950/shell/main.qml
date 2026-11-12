@@ -115,4 +115,29 @@ Rectangle {
         running: scrollTestSwipes > 0
         onTriggered: swipes.start()
     }
+
+    // EMBEDLITE_SHELL_PINCHTEST=<seconds>: two fingers move apart once
+    Timer {
+        id: pinchStep
+        property int step: 0
+        interval: 30
+        repeat: true
+        onTriggered: {
+            var cx = web.width / 2, cy = web.height / 2, d = 40 + step * 14
+            if (step === 0) {
+                web.synthTouchBegin([Qt.point(cx - d, cy), Qt.point(cx + d, cy)])
+            } else if (step < 12) {
+                web.synthTouchMove([Qt.point(cx - d, cy), Qt.point(cx + d, cy)])
+            } else {
+                web.synthTouchEnd([Qt.point(cx - d, cy), Qt.point(cx + d, cy)])
+                stop()
+            }
+            step++
+        }
+    }
+    Timer {
+        interval: pinchTestStart * 1000
+        running: pinchTestStart > 0
+        onTriggered: { pinchStep.step = 0; pinchStep.start() }
+    }
 }

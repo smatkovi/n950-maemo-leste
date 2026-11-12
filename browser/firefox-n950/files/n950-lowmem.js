@@ -91,3 +91,9 @@ pref("browser.urlbar.speculativeConnect.enabled", false);
 pref("extensions.update.enabled", false);
 pref("extensions.getAddons.cache.enabled", false);
 pref("extensions.systemAddon.update.enabled", false);
+
+// WebRender texture cache updates through a staging texture, copied by draws
+// (OpenGL ES 2.0 has no blit): on the SGX530 text stayed in place far more
+// often while scrolling.
+pref("gfx.webrender.batched-texture-uploads", true);
+pref("gfx.webrender.draw-calls-for-texture-copy", true);
