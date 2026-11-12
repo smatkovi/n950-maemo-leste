@@ -28,12 +28,15 @@ pref("browser.cache.disk.enable", true);
 pref("browser.cache.disk.smart_size.enabled", false);
 pref("browser.cache.disk.capacity", 102400);
 
-// Drawing: the software renderer for now. WebRender's OpenGL ES 2.0 path
-// for the SGX530 (patches/) rasterises text about 5 times faster, but 17 of
-// its 51 shader variants do not compile on the SGX yet (too many varyings);
-// gfx.webrender.all = true and gfx.webrender.software = false try it.
-pref("gfx.webrender.all", false);
-pref("gfx.webrender.software", true);
+// Drawing: WebRender on the SGX530 through its OpenGL ES 2.0 path (the
+// patches in patches/): text rasterises about 5 times faster than with the
+// software renderer. gfx.webrender.software = true in about:config goes
+// back to the software renderer.
+pref("gfx.webrender.all", true);
+pref("gfx.webrender.software", false);
+// Edge anti-aliasing of rotated, skewed and SVG shapes; false gives them
+// jagged edges but draws rotated content three times as fast on the SGX530.
+pref("gfx.webrender.edge-aa", true);
 // Compiled shader programs are kept in the profile: the SGX530 needs
 // about 1.5 s per program, so each is compiled only once.
 pref("gfx.webrender.program-binary-disk", true);
@@ -72,3 +75,20 @@ pref("toolkit.telemetry.unified", false);
 pref("app.shield.optoutstudies.enabled", false);
 pref("app.normandy.enabled", false);
 pref("browser.ml.enable", false);
+
+// Page loads on one Cortex-A8 core: no work beside the page that the phone
+// does not need. HTTP/3's QUIC runs its crypto and congestion control in
+// user space, which costs more here than TCP and TLS; no captive portal
+// and connectivity probes, no speculative prefetching and preconnects,
+// no add-on update checks.
+pref("network.http.http3.enable", false);
+pref("network.captive-portal-service.enabled", false);
+pref("network.connectivity-service.enabled", false);
+pref("network.prefetch-next", false);
+pref("network.dns.disablePrefetch", true);
+pref("network.predictor.enabled", false);
+pref("network.http.speculative-parallel-limit", 0);
+pref("browser.urlbar.speculativeConnect.enabled", false);
+pref("extensions.update.enabled", false);
+pref("extensions.getAddons.cache.enabled", false);
+pref("extensions.systemAddon.update.enabled", false);
