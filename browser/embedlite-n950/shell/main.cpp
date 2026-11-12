@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QImage>
 #include <QQmlContext>
 #include <QTextStream>
 #include <QQuickView>
@@ -64,5 +65,16 @@ int main(int argc, char **argv)
         view.setSource(QUrl(QStringLiteral("qrc:/main.qml")));
         view.showFullScreen();
     });
+
+    // EMBEDLITE_SHELL_GRAB=file.png[:seconds] saves what the window shows
+    // (read back from GL) after a while; screenshots of the X root window do
+    // not contain EGL windows on the N950.
+    const QString grab = qEnvironmentVariable("EMBEDLITE_SHELL_GRAB");
+    if (!grab.isEmpty()) {
+        const int colon = grab.lastIndexOf(':');
+        const QString file = colon > 0 ? grab.left(colon) : grab;
+        const int seconds = colon > 0 ? grab.mid(colon + 1).toInt() : 60;
+        QTimer::singleShot(seconds * 1000, [&view, file] { view.grabWindow().save(file); });
+    }
     return app.exec();
 }
