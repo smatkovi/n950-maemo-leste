@@ -78,11 +78,10 @@ pref("browser.ml.enable", false);
 
 // Page loads on one Cortex-A8 core: no work beside the page that the phone
 // does not need. HTTP/3's QUIC runs its crypto and congestion control in
-// user space, which costs more here than TCP and TLS; no captive portal
-// and connectivity probes, no speculative prefetching and preconnects,
-// no add-on update checks.
+// user space, which costs more here than TCP and TLS; no connectivity
+// probes (the captive portal check for WLAN logins stays), no speculative
+// prefetching and preconnects, no add-on update checks.
 pref("network.http.http3.enable", false);
-pref("network.captive-portal-service.enabled", false);
 pref("network.connectivity-service.enabled", false);
 pref("network.prefetch-next", false);
 pref("network.dns.disablePrefetch", true);
