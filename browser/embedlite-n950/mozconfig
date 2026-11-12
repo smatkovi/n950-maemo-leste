@@ -48,8 +48,15 @@ ac_add_options --enable-optimize=-O2
 ac_add_options --enable-release
 ac_add_options --enable-cpp-rtti
 ac_add_options --disable-debug
-ac_add_options --disable-debug-symbols
-ac_add_options --enable-strip
+if [ -n "$N950_SYMBOLS" ]; then
+	# function names and line tables to symbolize crashes on the PC; the
+	# installed copy (--enable-install-strip) is still stripped
+	ac_add_options --enable-debug-symbols=-g1
+	ac_add_options --disable-strip
+else
+	ac_add_options --disable-debug-symbols
+	ac_add_options --enable-strip
+fi
 ac_add_options --enable-install-strip
 ac_add_options --disable-tests
 ac_add_options --disable-webdriver
