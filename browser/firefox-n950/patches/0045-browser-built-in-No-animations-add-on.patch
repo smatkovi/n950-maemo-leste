@@ -1,0 +1,172 @@
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Thu, 12 Nov 2026 19:30:00 +0100
+Subject: [PATCH] browser: built-in "No animations" add-on
+
+A switch for the N950's weak GPU: when turned on in Add-ons and themes,
+CSS animations and transitions jump to their end on every page (a user
+sheet, so pages' own !important rules do not win) and animated images
+stand still. It is built in like the themes, so it needs no signature,
+and it starts switched off.
+
+---
+--- /dev/null
++++ b/browser/extensions/n950-no-animations/moz.build
+@@ -0,0 +1,7 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++JAR_MANIFESTS += ["jar.mn"]
++
++EXTRA_JS_MODULES += ["N950NoAnimations.sys.mjs"]
+--- /dev/null
++++ b/browser/extensions/n950-no-animations/jar.mn
+@@ -0,0 +1,9 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++browser.jar:
++    builtin-addons/no-animations/manifest.json (manifest.json)
++    builtin-addons/no-animations/background.js (background.js)
++    builtin-addons/no-animations/no-motion.css (no-motion.css)
++    builtin-addons/no-animations/_locales/ (_locales/**)
+--- /dev/null
++++ b/browser/extensions/n950-no-animations/manifest.json
+@@ -0,0 +1,19 @@
++{
++  "manifest_version": 2,
++  "name": "__MSG_extensionName__",
++  "description": "__MSG_extensionDescription__",
++  "default_locale": "en",
++  "version": "1.0",
++
++  "browser_specific_settings": {
++    "gecko": {
++      "id": "no-animations@n950.maemo-leste"
++    }
++  },
++
++  "permissions": ["<all_urls>", "browserSettings"],
++
++  "background": {
++    "scripts": ["background.js"]
++  }
++}
+--- /dev/null
++++ b/browser/extensions/n950-no-animations/background.js
+@@ -0,0 +1,17 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++"use strict";
++
++// A user sheet, so it wins over the pages' own !important rules.
++browser.contentScripts.register({
++  matches: ["<all_urls>"],
++  css: [{ file: "no-motion.css" }],
++  cssOrigin: "user",
++  allFrames: true,
++  matchAboutBlank: true,
++  runAt: "document_start",
++});
++
++browser.browserSettings.imageAnimationBehavior.set({ value: "none" });
+--- /dev/null
++++ b/browser/extensions/n950-no-animations/no-motion.css
+@@ -0,0 +1,16 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* Animations and transitions jump to their end at once, so pages waiting
++ * for them still go on. */
++*,
++*::before,
++*::after {
++  animation-duration: 0s !important;
++  animation-delay: 0s !important;
++  animation-iteration-count: 1 !important;
++  transition-duration: 0s !important;
++  transition-delay: 0s !important;
++  scroll-behavior: auto !important;
++}
+--- /dev/null
++++ b/browser/extensions/n950-no-animations/N950NoAnimations.sys.mjs
+@@ -0,0 +1,33 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
++});
++
++const ID = "no-animations@n950.maemo-leste";
++const SWITCHED_OFF_PREF = "browser.n950.noAnimations.initiallyDisabled";
++
++/**
++ * Installs the built-in "No animations" add-on, switched off the first
++ * time; it is turned on and off in Add-ons and themes.
++ */
++export const N950NoAnimations = {
++  async init() {
++    await lazy.AddonManager.maybeInstallBuiltinAddon(
++      ID,
++      "1.0",
++      "resource://builtin-addons/no-animations/"
++    );
++    if (Services.prefs.getBoolPref(SWITCHED_OFF_PREF, false)) {
++      return;
++    }
++    let addon = await lazy.AddonManager.getAddonByID(ID);
++    if (addon) {
++      await addon.disable();
++      Services.prefs.setBoolPref(SWITCHED_OFF_PREF, true);
++    }
++  },
++};
+--- /dev/null
++++ b/browser/extensions/n950-no-animations/_locales/en/messages.json
+@@ -0,0 +1,8 @@
++{
++  "extensionName": {
++    "message": "No animations"
++  },
++  "extensionDescription": {
++    "message": "Stops CSS animations, transitions and animated images on all pages. Switch it off when a page does not work without them."
++  }
++}
+--- /dev/null
++++ b/browser/extensions/n950-no-animations/_locales/de/messages.json
+@@ -0,0 +1,8 @@
++{
++  "extensionName": {
++    "message": "Keine Animationen"
++  },
++  "extensionDescription": {
++    "message": "Hält CSS-Animationen, Übergänge und animierte Bilder auf allen Seiten an. Ausschalten, wenn eine Seite ohne sie nicht funktioniert."
++  }
++}
+--- a/browser/extensions/moz.build
++++ b/browser/extensions/moz.build
+@@ -9,6 +9,7 @@
+     "pictureinpicture",
+     "search-detection",
+     "newtab",
++    "n950-no-animations",
+ ]
+ 
+ JAR_MANIFESTS += ["jar.mn"]
+--- a/browser/components/BrowserComponents.manifest
++++ b/browser/components/BrowserComponents.manifest
+@@ -124,6 +124,7 @@
+ 
+ category browser-idle-startup moz-src:///browser/components/places/PlacesUIUtils.sys.mjs PlacesUIUtils.unblockToolbars
+ category browser-idle-startup resource:///modules/BuiltInThemes.sys.mjs BuiltInThemes.ensureBuiltInThemes
++category browser-idle-startup resource:///modules/N950NoAnimations.sys.mjs N950NoAnimations.init
+ category browser-idle-startup resource://gre/modules/RFPHelper.sys.mjs RFPHelper.init
+ category browser-idle-startup resource://gre/modules/Blocklist.sys.mjs Blocklist.loadBlocklistAsync
+ category browser-idle-startup resource://gre/modules/psm/RemoteSecuritySettings.sys.mjs RemoteSecuritySettings.init
