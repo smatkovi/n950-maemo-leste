@@ -69,4 +69,42 @@ Rectangle {
         orientation: Qt.LandscapeOrientation
         Component.onCompleted: web.url = startUrl
     }
+
+    Timer {
+        id: swipeStep
+        property int step: 0
+        interval: 30
+        repeat: true
+        onTriggered: {
+            var x = web.width / 2, y0 = web.height - 40, y1 = 40
+            if (step === 0) {
+                web.synthTouchBegin([Qt.point(x, y0)])
+            } else if (step < 10) {
+                web.synthTouchMove([Qt.point(x, y0 + (y1 - y0) * step / 10)])
+            } else {
+                web.synthTouchEnd([Qt.point(x, y1)])
+                stop()
+            }
+            step++
+        }
+    }
+    Timer {
+        id: swipes
+        property int left: scrollTestSwipes
+        interval: 2000
+        repeat: true
+        onTriggered: {
+            if (left-- <= 0) {
+                stop()
+                return
+            }
+            swipeStep.step = 0
+            swipeStep.start()
+        }
+    }
+    Timer {
+        interval: scrollTestStart * 1000
+        running: scrollTestSwipes > 0
+        onTriggered: swipes.start()
+    }
 }

@@ -30,6 +30,10 @@ static void writeUserPrefs(bool edgeAa)
     // from an older engine that always ran in software must not win
     out << "user_pref(\"layers.acceleration.disabled\", false);\n"
         << "user_pref(\"layers.offmainthreadcomposition.force-basic\", false);\n"
+        // a phone browser's user agent, so sites send their light mobile
+        // pages (the N9's browser did the same with an Android one)
+        << "user_pref(\"general.useragent.override\", \"Mozilla/5.0 (Android 10; "
+           "Mobile; rv:153.0) Gecko/153.0 Firefox/153.0\");\n"
         << "user_pref(\"gfx.webrender.all\", true);\n"
         << "user_pref(\"gfx.webrender.software\", false);\n"
         << "user_pref(\"gfx.webrender.program-binary-disk\", true);\n"
@@ -64,6 +68,14 @@ int main(int argc, char **argv)
     QQuickView view;
     view.setResizeMode(QQuickView::SizeRootObjectToView);
     view.rootContext()->setContextProperty(QStringLiteral("startUrl"), start);
+    // EMBEDLITE_SHELL_SCROLLTEST=<seconds>:<swipes>: after a while, swipes up
+    // over the page with synthetic touch input, one swipe every 2 s
+    const QStringList scrollTest =
+        qEnvironmentVariable("EMBEDLITE_SHELL_SCROLLTEST").split(':');
+    view.rootContext()->setContextProperty(QStringLiteral("scrollTestStart"),
+                                           scrollTest.value(0).toInt());
+    view.rootContext()->setContextProperty(QStringLiteral("scrollTestSwipes"),
+                                           scrollTest.value(1).toInt());
 
     QTimer::singleShot(0, [&] {
         context->runEmbedding();
@@ -73,8 +85,8 @@ int main(int argc, char **argv)
     });
 
     // EMBEDLITE_SHELL_GRAB=file.png[:seconds] saves what the window shows
-    // (read back from GL) after a while; screenshots of the X root window do
-    // not contain EGL windows on the N950.
+    // (read back from GL) after a while. It does not contain the web view
+    // when Gecko renders on the GPU; xwd -root does (display on).
     const QString grab = qEnvironmentVariable("EMBEDLITE_SHELL_GRAB");
     if (!grab.isEmpty()) {
         const int colon = grab.lastIndexOf(':');

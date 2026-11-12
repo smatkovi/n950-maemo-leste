@@ -281,3 +281,29 @@ one more than before).
 `WR_NO_EDGE_AA` leaves quads without edge anti-aliasing: transforms-simple
 then rasterises in 510 ms instead of 1583 (SWGL: 701), with jagged edges
 on rotated content only.
+
+### EmbedLite on the SGX530 (2026-11-12)
+
+EmbedLite now renders with hardware WebRender too. Three things had kept
+it in software or broken: EmbedLite tested `GL_PROVIDER_EGL`, which Gecko
+no longer defines, and wrote `layers.acceleration.disabled=true` on every
+start; headless contexts on Qt's EGL display asked for an ES 3 config,
+which the SGX530 has none of; and the compositor got a context of its own,
+in which WebRender's shared programs were invalid (every lazily linked one
+failed with GL_INVALID_VALUE). Gecko patches 0190–0193.
+
+`tools/gles2-link.c` compiles and links every dumped variant on the device
+(`DISPLAY=:0 ./gles2-link DIR`; `BINARY_LENGTH=1` also prints each
+program binary's size). It showed that the SGX530 refuses, at random, one
+or two programs per run whose vertex and fragment shaders read the same
+sampler ("Uniform variable sGpuBufferF type/precision does not match"):
+brush_blend, ps_quad_gradient, cs_svg_filter_node, a different one each
+run. Linking the same program object again fails again; shaders compiled
+afresh into a new program link (patch 0193 does that on ES 2.0). The
+sampler-count rule above may partly have been this.
+
+Shader binaries are saved to the profile at the end of a frame. A page's
+first frame on the SGX530 compiles every program it needs, which takes
+minutes, so a run stopped before that frame ends saves nothing and the
+next start compiles again: the engine needs a precompiled cache shipped
+with it, as firefox-n950 has.
