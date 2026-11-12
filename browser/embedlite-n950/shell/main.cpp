@@ -10,7 +10,10 @@
 #include <QQmlEngine>
 #include <QTextStream>
 #include <QQuickView>
+#include <QSettings>
 #include <QTimer>
+#include <QUrl>
+#include <mozilla/embedlite/EmbedLiteApp.h>
 #include <qmozcontext.h>
 #include <qmozenginesettings.h>
 
@@ -49,6 +52,57 @@ static void writeUserPrefs(bool edgeAa)
         << "user_pref(\"gfx.webrender.max-partial-present-rects\", 0);\n";
 }
 
+// Stops CSS animations and transitions on every page: they jump to their
+// end state at once (so pages waiting for them still go on).
+static const char kNoMotionCss[] =
+    "*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;"
+    "animation-iteration-count:1!important;transition-duration:0s!important;"
+    "transition-delay:0s!important;scroll-behavior:auto!important}";
+
+// The shell's own switches, kept in ~/.config/embedlite-shell/settings.conf
+// and pushed into the engine once it runs and whenever one changes.
+class ShellSettings : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool animations READ animations WRITE setAnimations NOTIFY animationsChanged)
+
+public:
+    bool animations() const { return m_settings.value(QStringLiteral("animations"), true).toBool(); }
+    void setAnimations(bool on)
+    {
+        if (on == animations())
+            return;
+        m_settings.setValue(QStringLiteral("animations"), on);
+        apply();
+        Q_EMIT animationsChanged();
+    }
+
+    void apply()
+    {
+        QMozContext *context = QMozContext::instance();
+        if (!context->isInitialized())
+            return;
+        const bool on = animations();
+        QMozEngineSettings *engine = QMozEngineSettings::instance();
+        // the prefers-reduced-motion media query, which many sites honour
+        engine->setPreference(QStringLiteral("ui.prefersReducedMotion"), on ? 0 : 1);
+        engine->setPreference(QStringLiteral("image.animation_mode"),
+                              on ? QStringLiteral("normal") : QStringLiteral("none"));
+        if (m_noMotionSheet == on) {
+            const QByteArray uri = "data:text/css," + QUrl::toPercentEncoding(QString::fromLatin1(kNoMotionCss));
+            context->GetApp()->LoadGlobalStyleSheet(uri.constData(), !on);
+            m_noMotionSheet = !on;
+        }
+    }
+
+Q_SIGNALS:
+    void animationsChanged();
+
+private:
+    QSettings m_settings{QStringLiteral("embedlite-shell"), QStringLiteral("settings")};
+    bool m_noMotionSheet = false;
+};
+
 int main(int argc, char **argv)
 {
     QGuiApplication app(argc, argv);
@@ -72,11 +126,15 @@ int main(int argc, char **argv)
     QObject::connect(context, &QMozContext::lastViewDestroyed, context, &QMozContext::stopEmbedding);
     QObject::connect(context, &QMozContext::contextDestroyed, &app, &QGuiApplication::quit);
 
+    ShellSettings settings;
+    QObject::connect(context, &QMozContext::initialized, &settings, &ShellSettings::apply);
+
     QQuickView view;
     view.setResizeMode(QQuickView::SizeRootObjectToView);
     // the toolbar's close button (Qt.quit()): the shell is full screen
     QObject::connect(view.engine(), &QQmlEngine::quit, &app, &QGuiApplication::quit);
     view.rootContext()->setContextProperty(QStringLiteral("startUrl"), start);
+    view.rootContext()->setContextProperty(QStringLiteral("shellSettings"), &settings);
     // EMBEDLITE_SHELL_SCROLLTEST=<seconds>:<swipes>: after a while, swipes up
     // over the page with synthetic touch input, one swipe every 2 s
     const QStringList scrollTest =
@@ -128,3 +186,5 @@ int main(int argc, char **argv)
     }
     return app.exec();
 }
+
+#include "main.moc"

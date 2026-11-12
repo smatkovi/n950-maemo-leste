@@ -40,7 +40,15 @@ Rectangle {
         }
 
         Rectangle {
-            anchors { left: buttons.right; right: closeButton.left; verticalCenter: parent.verticalCenter; leftMargin: 6; rightMargin: 6 }
+            id: settingsButton
+            anchors { right: closeButton.left; verticalCenter: parent.verticalCenter; rightMargin: 6 }
+            width: 40; height: 36; radius: 4; color: settingsPanel.visible ? "#3080ff" : "#404040"
+            Text { anchors.centerIn: parent; text: "⚙"; color: "white"; font.pixelSize: 22 }
+            MouseArea { anchors.fill: parent; onClicked: settingsPanel.visible = !settingsPanel.visible }
+        }
+
+        Rectangle {
+            anchors { left: buttons.right; right: settingsButton.left; verticalCenter: parent.verticalCenter; leftMargin: 6; rightMargin: 6 }
             height: 36; radius: 4; color: "white"
             TextInput {
                 id: address
@@ -76,6 +84,51 @@ Rectangle {
         // window for a portrait-native (Sailfish) screen, transposed.
         orientation: Qt.LandscapeOrientation
         Component.onCompleted: web.url = startUrl
+    }
+
+    // the shell's switches, over the page's top right corner
+    Rectangle {
+        id: settingsPanel
+        visible: false
+        z: 1
+        anchors { right: parent.right; top: bar.bottom }
+        width: 360
+        height: switches.height + 12
+        color: "#303030"
+        MouseArea { anchors.fill: parent }
+
+        Column {
+            id: switches
+            anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 6 }
+            Repeater {
+                model: [
+                    { label: "Animationen", key: "animations" }
+                ]
+                Item {
+                    width: switches.width; height: 56
+                    property bool on: shellSettings[modelData.key]
+                    Text {
+                        anchors { left: parent.left; leftMargin: 16; verticalCenter: parent.verticalCenter }
+                        text: modelData.label; color: "white"; font.pixelSize: 22
+                    }
+                    Rectangle {
+                        id: track
+                        anchors { right: parent.right; rightMargin: 16; verticalCenter: parent.verticalCenter }
+                        width: 64; height: 32; radius: 16
+                        color: parent.on ? "#3080ff" : "#606060"
+                        Rectangle {
+                            width: 28; height: 28; radius: 14; color: "white"
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: parent.parent.on ? parent.width - width - 2 : 2
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: shellSettings[modelData.key] = !parent.on
+                    }
+                }
+            }
+        }
     }
 
     Timer {
