@@ -1,0 +1,11 @@
+[Desktop Entry]
+Encoding=UTF-8
+Version=1.0
+Type=Application
+Name=Browser (EmbedLite)
+Comment=Gecko 153 through EmbedLite with WebRender on the SGX530
+Exec=/usr/bin/embedlite-shell %u
+Icon=embedlite-shell
+StartupWMClass=embedlite-shell
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+Categories=Network;WebBrowser;

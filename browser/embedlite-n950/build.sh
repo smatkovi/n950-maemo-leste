@@ -19,6 +19,12 @@
 # them next to libxul (shader-cache), from where each profile's cache is
 # refilled when the build changes. Without it the first page after an update
 # waits minutes for programs to compile.
+#
+# The shell (shell/, built with qmake in the armhf chroot) goes to
+# /usr/bin/embedlite-shell; shell/embedlite-shell.desktop to
+# /usr/share/applications/hildon/ and shell/embedlite-shell-{48,64}.png to
+# /usr/share/icons/hicolor/{48x48,64x64}/apps/embedlite-shell.png give it the
+# menu entry "Browser (EmbedLite)".
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$(cd "${SRC:?set SRC=<packaging>/gecko-dev}" && pwd)
