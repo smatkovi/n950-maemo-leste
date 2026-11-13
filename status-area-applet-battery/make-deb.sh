@@ -15,13 +15,14 @@ W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 R=$W/root
 L=usr/lib/arm-linux-gnueabihf/hildon-desktop
-mkdir -p "$R/$L" "$R/usr/share/applications/hildon-status-menu" "$R/usr/share/gconf/schemas" "$W/DEBIAN" "$OUT"
+mkdir -p "$R/$L" "$R/usr/share/applications/hildon-status-menu" "$R/etc/gconf/schemas" "$W/DEBIAN" "$OUT"
 install -m 644 "$D/$L/status-area-applet-battery.so" "$R/$L/"
 llvm-strip --strip-unneeded "$R/$L/status-area-applet-battery.so"
 install -m 644 "$D"/usr/share/applications/hildon-status-menu/status-area-applet-battery.desktop \
 	"$R/usr/share/applications/hildon-status-menu/"
-# dh_gconf's place for schemas, where gconf-schemas looks
-install -m 644 "$(find "$D" -name status-area-applet-battery.schemas | head -1)" "$R/usr/share/gconf/schemas/"
+# where Leste's package has it, a conffile
+install -m 644 "$(find "$D" -name status-area-applet-battery.schemas | head -1)" "$R/etc/gconf/schemas/"
+echo /etc/gconf/schemas/status-area-applet-battery.schemas > "$W/DEBIAN/conffiles"
 for s in 48x48 scalable; do
 	mkdir -p "$R/usr/share/icons/hicolor/$s/hildon"
 	install -m 644 "$HERE"/icons/$s/hildon/*.png "$R/usr/share/icons/hicolor/$s/hildon/"
@@ -41,9 +42,9 @@ Description: status area battery applet
  N950 build: while charging, the charge level with a lightning bolt instead
  of an animation that reloaded its icon every second.
 CTL
+# as Leste's maintainer scripts: a failing gconf-schemas does not fail the install
 cat > "$W/DEBIAN/postinst" <<'SH'
 #!/bin/sh
-set -e
 if [ "$1" = configure ]; then
 	gconf-schemas --register status-area-applet-battery.schemas
 	[ -x /usr/bin/gtk-update-icon-cache ] && gtk-update-icon-cache -q -f /usr/share/icons/hicolor || true
@@ -51,7 +52,6 @@ fi
 SH
 cat > "$W/DEBIAN/prerm" <<'SH'
 #!/bin/sh
-set -e
 case "$1" in
 remove|upgrade|deconfigure) gconf-schemas --unregister status-area-applet-battery.schemas ;;
 esac

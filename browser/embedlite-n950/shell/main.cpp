@@ -13,6 +13,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <QUrl>
+#include <cstdlib>
 #include <unistd.h>
 #include <xcb/xcb.h>
 #include <mozilla/embedlite/EmbedLiteApp.h>
@@ -20,13 +21,13 @@
 #include <qmozenginesettings.h>
 
 // Keeps the window in hildon-desktop's compositor. hildon-desktop draws a
-// full screen window that is not stackable straight to the screen unless
-// _HILDON_NON_COMPOSITED_WINDOW is 0, and switches it back into the
-// compositor for its status menu, task switcher or an incoming call. The
-// SGX530's driver went on drawing into the buffer from before the switch:
-// the shell's picture froze, went black, or hildon-desktop's zoom stuck at
-// a shrunken home view. Composited, as Firefox always is, none of this
-// happens. Set from a connection of its own, before Qt maps the window.
+// full screen window that is not stackable straight to the screen (X page
+// flips to the window's buffers) unless _HILDON_NON_COMPOSITED_WINDOW is 0,
+// and switches it back into the compositor for its status menu, task
+// switcher or an incoming call. After such a switch the panel went on
+// showing an old picture of the shell, or black, until the display was
+// reset. A window composited from the start is never flipped to. Set from a
+// connection of its own, before Qt maps the window.
 static void keepComposited(WId window)
 {
     xcb_connection_t *c = xcb_connect(nullptr, nullptr);
