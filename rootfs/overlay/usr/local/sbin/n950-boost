@@ -1,8 +1,19 @@
 #!/bin/sh
 # N950: the 1 GHz turbo OPP (cpufreq boost) on USB power, 800 MHz on battery.
 # /etc/n950-boost may hold "on", "off" or "auto" (default) to override.
+# /etc/n950-governor names the governor to run (default ondemand).
+#
+# udev runs this on every power_supply event, often several at once (plugging
+# USB, the fuel gauge's updates, boot.d at boot): one run at a time, and the
+# governor is restored from the setting, never from what the CPU currently
+# runs. Reading it back used to pick up another run's temporary powersave and
+# left the CPU at 300 MHz until the next reboot.
 B=/sys/devices/system/cpu/cpufreq/boost
 [ -w "$B" ] || exit 0
+# n950-octest pins the frequency itself while it runs
+pgrep -f '/usr/local/sbin/n950-octest [0-9]' >/dev/null && exit 0
+exec 9>/run/n950-boost.lock
+flock 9
 mode=$(cat /etc/n950-boost 2>/dev/null || echo auto)
 case "$mode" in
 on)  want=1 ;;
@@ -13,6 +24,7 @@ off) want=0 ;;
      done ;;
 esac
 cap=$(cat /etc/n950-maxfreq 2>/dev/null || echo 1000000)
+gov=$(cat /etc/n950-governor 2>/dev/null || echo ondemand)
 G=/sys/devices/system/cpu/cpu0/cpufreq
 if [ "$(cat $B)" != "$want" ]; then
 	if [ "$want" = 1 ]; then
@@ -20,14 +32,13 @@ if [ "$(cat $B)" != "$want" ]; then
 		# (1.1-1.3 GHz); under ondemand the governor could roam into one before
 		# the cap is set and reset the device. Drop to powersave (lowest freq)
 		# for the moment boost is switched on, cap, then resume the governor.
-		gov=$(cat $G/scaling_governor)
 		echo powersave > $G/scaling_governor
 		echo 1 > "$B"
 		echo "$cap" > $G/scaling_max_freq 2>/dev/null
-		echo "$gov" > $G/scaling_governor
 	else
 		echo "$cap" > $G/scaling_max_freq 2>/dev/null
 		echo 0 > "$B"
 	fi
 fi
 [ "$(cat $G/scaling_max_freq)" = "$cap" ] || echo "$cap" > $G/scaling_max_freq 2>/dev/null
+[ "$(cat $G/scaling_governor)" = "$gov" ] || echo "$gov" > $G/scaling_governor
