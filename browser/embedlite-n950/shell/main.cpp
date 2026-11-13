@@ -14,9 +14,37 @@
 #include <QTimer>
 #include <QUrl>
 #include <unistd.h>
+#include <xcb/xcb.h>
 #include <mozilla/embedlite/EmbedLiteApp.h>
 #include <qmozcontext.h>
 #include <qmozenginesettings.h>
+
+// Keeps the window in hildon-desktop's compositor. hildon-desktop draws a
+// full screen window that is not stackable straight to the screen unless
+// _HILDON_NON_COMPOSITED_WINDOW is 0, and switches it back into the
+// compositor for its status menu, task switcher or an incoming call. The
+// SGX530's driver went on drawing into the buffer from before the switch:
+// the shell's picture froze, went black, or hildon-desktop's zoom stuck at
+// a shrunken home view. Composited, as Firefox always is, none of this
+// happens. Set from a connection of its own, before Qt maps the window.
+static void keepComposited(WId window)
+{
+    xcb_connection_t *c = xcb_connect(nullptr, nullptr);
+    if (!xcb_connection_has_error(c)) {
+        static const char name[] = "_HILDON_NON_COMPOSITED_WINDOW";
+        xcb_intern_atom_reply_t *atom = xcb_intern_atom_reply(
+            c, xcb_intern_atom(c, 0, sizeof name - 1, name), nullptr);
+        if (atom) {
+            const uint32_t composited = 0;
+            xcb_change_property(c, XCB_PROP_MODE_REPLACE, window, atom->atom,
+                                XCB_ATOM_INTEGER, 32, 1, &composited);
+            free(atom);
+        }
+        // a round trip: the server has the property before the window maps
+        free(xcb_get_input_focus_reply(c, xcb_get_input_focus(c), nullptr));
+    }
+    xcb_disconnect(c);
+}
 
 static const char kComponents[] = "/usr/lib/arm-linux-gnueabihf/mozembedlite-next153";
 static const char kProfile[] = "embedlite-shell";
@@ -165,10 +193,7 @@ int main(int argc, char **argv)
         context->runEmbedding();
         QMozEngineSettings::instance();
         view.setSource(QUrl(QStringLiteral("qrc:/main.qml")));
-        // past hildon-desktop's compositor (_HILDON_NON_COMPOSITED_WINDOW): it
-        // went on showing an old picture of the window after its status menu
-        // had been open, while the shell kept drawing
-        view.setProperty("X-Maemo-NotComposited", true);
+        keepComposited(view.winId());
         view.showFullScreen();
     });
     // hildon-desktop sometimes took the window as a normal one although it

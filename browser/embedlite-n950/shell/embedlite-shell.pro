@@ -6,7 +6,7 @@ TARGET = embedlite-shell
 QT += quick qml
 CONFIG += link_pkgconfig c++17
 QMAKE_CXXFLAGS += -std=gnu++20
-PKGCONFIG += qt5embedwidget-next153
+PKGCONFIG += qt5embedwidget-next153 xcb
 SOURCES += main.cpp
 RESOURCES += shell.qrc
 target.path = /usr/bin
