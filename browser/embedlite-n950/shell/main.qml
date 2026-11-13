@@ -75,6 +75,16 @@ Rectangle {
         }
     }
 
+    // Ctrl+L: into the address line with its text selected, as in desktop browsers
+    Shortcut {
+        sequence: "Ctrl+L"
+        context: Qt.ApplicationShortcut
+        onActivated: {
+            address.forceActiveFocus()
+            address.selectAll()
+        }
+    }
+
     QmlMozView {
         id: web
         anchors { left: parent.left; right: parent.right; top: bar.bottom; bottom: parent.bottom }
