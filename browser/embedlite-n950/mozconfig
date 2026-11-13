@@ -31,7 +31,26 @@ ac_add_options --with-float-abi=hard
 ac_add_options --with-thumb=yes
 ac_add_options --with-sysroot="$SYSROOT"
 ac_add_options --enable-linker=lld
-ac_add_options --with-ccache=sccache
+# N950_PGO=generate: a build that records where the code runs (run it on the
+# phone with LLVM_PROFILE_FILE set, then llvm-profdata merge the .profraw
+# files); N950_PGO=use N950_PGO_PROFILE=<merged.profdata>: the optimized build
+# from those profiles, with cross-language (C++ and Rust) LTO. Profiles
+# cover the C++ code only: rustup's thumbv7neon standard library has no
+# profiler runtime. Without sccache: instrumented objects are of no use to
+# later builds.
+case "$N950_PGO" in
+generate)
+	ac_add_options --enable-profile-generate
+	;;
+use)
+	ac_add_options --enable-profile-use
+	ac_add_options --with-pgo-profile-path="$N950_PGO_PROFILE"
+	ac_add_options --enable-lto=cross
+	;;
+*)
+	ac_add_options --with-ccache=sccache
+	;;
+esac
 export CC=clang
 export CXX=clang++
 export HOST_CC=clang

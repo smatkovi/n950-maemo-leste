@@ -171,12 +171,18 @@ int main(int argc, char **argv)
     view.setResizeMode(QQuickView::SizeRootObjectToView);
     // the toolbar's close button (Qt.quit()): the shell is full screen, so
     // its window goes at once; Gecko shuts down after the last view, and the
-    // process ends at the latest 5 s later
-    QObject::connect(view.engine(), &QQmlEngine::quit, &view, [&view] {
+    // process ends at the latest 5 s (EMBEDLITE_SHELL_EXIT_GRACE) later
+    const int grace = qEnvironmentVariableIsSet("EMBEDLITE_SHELL_EXIT_GRACE")
+        ? qEnvironmentVariableIntValue("EMBEDLITE_SHELL_EXIT_GRACE") : 5;
+    QObject::connect(view.engine(), &QQmlEngine::quit, &view, [&view, grace] {
         view.hide();
         view.setSource(QUrl());
-        QTimer::singleShot(5000, [] { _exit(0); });
+        QTimer::singleShot(grace * 1000, [] { _exit(0); });
     }, Qt::QueuedConnection);
+    // EMBEDLITE_SHELL_QUIT=<seconds>: quits as the close button does, after a
+    // while; a PGO training run writes its profile only on a normal exit
+    if (const int quitAfter = qEnvironmentVariableIntValue("EMBEDLITE_SHELL_QUIT"))
+        QTimer::singleShot(quitAfter * 1000, view.engine(), &QQmlEngine::quit);
     view.rootContext()->setContextProperty(QStringLiteral("startUrl"), start);
     view.rootContext()->setContextProperty(QStringLiteral("shellSettings"), &settings);
     // EMBEDLITE_SHELL_SCROLLTEST=<seconds>:<swipes>: after a while, swipes up
