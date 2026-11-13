@@ -13,6 +13,12 @@
 # clang/lld, cbindgen, node, python3, sccache, and a rustup toolchain with
 # thumbv7neon-unknown-linux-gnueabihf (RUSTUP_TOOLCHAIN_BIN). The build
 # directory is $SRC/../obj-embedlite-n950 (mozconfig).
+#
+# After installing a new build on the phone, run gen-shader-cache.sh there
+# (as root): it compiles every WebRender program once on the SGX530 and puts
+# them next to libxul (shader-cache), from where each profile's cache is
+# refilled when the build changes. Without it the first page after an update
+# waits minutes for programs to compile.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$(cd "${SRC:?set SRC=<packaging>/gecko-dev}" && pwd)
