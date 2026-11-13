@@ -1,0 +1,36 @@
+From 0f18cbf23231f45d6bafa6e4f7faceac853f90e5 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Fri, 13 Nov 2026 11:56:28 +0100
+Subject: [PATCH] ARM: dts: omap3-n950: SGX530 at CORE/2
+
+The PowerVR SGX530 ran from the reset default CORE/3, 130 MHz with the
+N950's 390 MHz CORE clock. Harmattan's driver ran it at up to 200 MHz on
+this board (fclock_max in board-rm680-video.c), which is CORE/2. Select
+that parent for the SGX functional clock (195 MHz).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n950.dts | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n950.dts b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+index 7a905875d..21537146b 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n950.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n950.dts
+@@ -729,3 +729,13 @@ fm_codec_dai: simple-audio-card,codec {
+ 		};
+ 	};
+ };
++
++/*
++ * PowerVR SGX530 at CORE/2 (195 MHz with the 390 MHz CORE clock) instead of
++ * the reset default CORE/3 (130 MHz): Harmattan's driver ran it at up to
++ * 200 MHz on this board (fclock_max in board-rm680-video.c).
++ */
++&sgx_module {
++	assigned-clocks = <&sgx_mux_fck>;
++	assigned-clock-parents = <&core_d2_ck>;
++};
+-- 
+2.56.0
+
