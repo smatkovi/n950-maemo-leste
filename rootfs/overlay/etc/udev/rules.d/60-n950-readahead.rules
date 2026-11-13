@@ -1,0 +1,3 @@
+# N950: read ahead 512 KiB on the eMMC, as Harmattan did (the kernel's
+# default is 128 KiB); program and library loads are mostly sequential.
+ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="mmcblk[0-9]", ATTR{queue/read_ahead_kb}="512"
