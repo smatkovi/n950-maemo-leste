@@ -165,6 +165,18 @@ int main(int argc, char **argv)
         context->runEmbedding();
         QMozEngineSettings::instance();
         view.setSource(QUrl(QStringLiteral("qrc:/main.qml")));
+        // past hildon-desktop's compositor (_HILDON_NON_COMPOSITED_WINDOW): it
+        // went on showing an old picture of the window after its status menu
+        // had been open, while the shell kept drawing
+        view.setProperty("X-Maemo-NotComposited", true);
+        view.showFullScreen();
+    });
+    // hildon-desktop sometimes took the window as a normal one although it
+    // asked for full screen: its status area then lay over the toolbar and a
+    // tap on the address field opened the status menu. Asking again once the
+    // window is up makes it a full screen application.
+    QTimer::singleShot(1500, &view, [&view] {
+        view.setWindowState(Qt::WindowNoState);
         view.showFullScreen();
     });
 
