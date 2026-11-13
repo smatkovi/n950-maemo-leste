@@ -42,6 +42,17 @@ embedlite)
 		"$R/usr/share/icons/hicolor/48x48/apps" "$R/usr/share/icons/hicolor/64x64/apps"
 	cp -a "${STAGE:?}/$G"/. "$R/$G/"
 	tar -xzf "${SHADER_CACHE:?}" -C "$R/$G"
+	# the stamp names the build ID compiled into libxul (PlatformBuildID), which
+	# can differ from platform.ini's; a wrong one makes every profile compile
+	# the programs again. It is the latest date-shaped string in libxul that is
+	# not in the future (BUILD_ID overrides).
+	now=$(date +%Y%m%d%H%M%S)
+	bid=$(grep -a -o -E '20[2-9][0-9](0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])([01][0-9]|2[0-3])[0-5][0-9][0-5][0-9]' "$R/$G/libxul.so" |
+		awk -v now="$now" '$1 <= now' | sort -n | tail -1)
+	bid=${BUILD_ID:-$bid}
+	[ -n "$bid" ] || { echo "no build ID in libxul.so" >&2; exit 1; }
+	echo "shader cache stamp: $bid" >&2
+	printf '%s\n4\n\n\n' "$bid" > "$R/$G/shader-cache/stamp"
 	cp -a "${COMPONENTS:?}/$LIB/mozembedlite-next153" "$R/$LIB/"
 	cp -a "${QTMOZEMBED:?}"/src/libqt5embedwidget-next153.so.1* "$R/$LIB/"
 	cp -a "$QTMOZEMBED"/qmlplugin5/libqmlmozembedpluginqt5.so "$QTMOZEMBED"/qmlplugin5/qmldir \

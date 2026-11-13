@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width"><title>bench</title>
+<style>.c{display:inline-block;padding:2px;margin:1px;border:1px solid #888;font:12px sans-serif}</style></head>
+<body style="font:15px monospace;margin:4px"><pre id="o">running…</pre><div id="w"></div>
+<script>
+var W = document.getElementById("w"), out = [];
+function med(a){a=a.slice().sort(function(x,y){return x-y});return a[a.length>>1];}
+function t(f){var t0=performance.now();f();return performance.now()-t0;}
+var tests = {
+  dom: function(){ W.textContent=""; for (var i=0;i<800;i++){var d=document.createElement("span");d.className="c";d.textContent="item "+i;W.appendChild(d);} },
+  layout: function(){ for (var i=0;i<15;i++){ W.style.width=(300+i*5)+"px"; void W.offsetHeight; } },
+  html: function(){ var s=""; for (var i=0;i<500;i++) s+="<p class=c><b>x"+i+"</b> <i>y</i> <a href='#'>z</a></p>"; W.innerHTML=s; },
+  json: function(){ var o=[]; for (var i=0;i<4000;i++) o.push({a:i,b:"s"+i,c:[i,i*2],d:{e:true}}); JSON.parse(JSON.stringify(o)); },
+  regex: function(){ var s=""; for (var i=0;i<4000;i++) s+="word"+i+" foo@bar"+i+".com "; s.replace(/\b\w+@\w+\.com\b/g,"X").match(/\d+/g); },
+  sort: function(){ var a=[]; for (var i=0;i<25000;i++) a.push((i*7919)%100003); a.sort(function(x,y){return x-y}); },
+  str: function(){ var a=[]; for (var i=0;i<10000;i++) a.push(String(i).padStart(6,"0")); a.join(",").split(",").map(function(x){return x.toUpperCase()}); }
+};
+var names = Object.keys(tests), res = {}, round = 0;
+names.forEach(function(n){res[n]=[];});
+function step(){
+  if (round >= 5) {
+    var total=0, lines=[];
+    names.forEach(function(n){var m=med(res[n]); total+=m; lines.push(n+" "+m.toFixed(0)+" ms");});
+    lines.push("TOTAL "+total.toFixed(0)+" ms");
+    W.textContent=""; document.getElementById("o").textContent=lines.join("\n");
+    document.title="done"; return;
+  }
+  names.forEach(function(n){res[n].push(t(tests[n]));});
+  round++; setTimeout(step, 200);
+}
+setTimeout(step, 4000);
+</script></body></html>
