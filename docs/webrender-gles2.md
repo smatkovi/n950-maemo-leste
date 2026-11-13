@@ -349,6 +349,19 @@ Later that day, measured with the shell's synthetic swipes
   glyph, and their uploads take 1-3 ms instead of 100-200 ms: the driver's
   slow byte-by-byte twiddling is its R8 path. The twiddle loop is gone from
   the profile. firefox-n950 patches 43-44.
+- Text of whole picture tiles still vanished now and then while scrolling
+  (link underlines stayed). A per-frame metric in EmbedLite (`EL_TXT`: dark
+  and blue pixels in eight bands of each composited frame) counted 14-53
+  such frames per scrolling run. Excluded on the way: upload order and
+  synchronisation, one instance per draw, compaction, the texture binding
+  cache (checked against the real GL state each draw), the depth test,
+  float texture re-allocation. A debug mode of ps_text_run that skipped
+  `do_clip()` had no lost text: primitives without a clip mask carry the
+  clip task address 0x7fffffff, which reaches ES 2.0 shaders as a float,
+  rounds to 2^31 and converts back to int undefinedly, so the
+  `CLIP_TASK_EMPTY` test failed now and then and a random render task
+  became the clip area. With 0x7fff0000, exact as a float, no frame lost
+  its text (gecko patch 0198, firefox-n950 patch 46).
 - The view sliding down and turning white while scrolling was qtmozembed
   taking `layout.css.devPixelsPerPx` (-1 unless set) as the pixel ratio
   (qtmozembed n950 32db97f).
