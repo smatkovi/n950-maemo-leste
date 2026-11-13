@@ -68,13 +68,15 @@ static const char kNoMotionCss[] =
 
 // The shell's own switches, kept in ~/.config/embedlite-shell/settings.conf
 // and pushed into the engine once it runs and whenever one changes.
+// Animations are off unless switched on: on the N950, redrawing an animated
+// page (a spinning loading indicator) took half the CPU away from scripts.
 class ShellSettings : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool animations READ animations WRITE setAnimations NOTIFY animationsChanged)
 
 public:
-    bool animations() const { return m_settings.value(QStringLiteral("animations"), true).toBool(); }
+    bool animations() const { return m_settings.value(QStringLiteral("animations"), false).toBool(); }
     void setAnimations(bool on)
     {
         if (on == animations())

@@ -2,11 +2,12 @@ From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
 Date: Thu, 12 Nov 2026 19:30:00 +0100
 Subject: [PATCH] browser: built-in "No animations" add-on
 
-A switch for the N950's weak GPU: when turned on in Add-ons and themes,
-CSS animations and transitions jump to their end on every page (a user
-sheet, so pages' own !important rules do not win) and animated images
-stand still. It is built in like the themes, so it needs no signature,
-and it starts switched off.
+A switch for the N950: while it is on, CSS animations and transitions
+jump to their end on every page (a user sheet, so pages' own !important
+rules do not win) and animated images stand still. It is built in like
+the themes, so it needs no signature, and it starts switched on: redrawing
+an animated page (a spinning loading indicator) took half the phone's CPU
+away from scripts. It is switched off in Add-ons and themes.
 
 ---
 --- /dev/null
@@ -94,7 +95,7 @@ and it starts switched off.
 +}
 --- /dev/null
 +++ b/browser/extensions/n950-no-animations/N950NoAnimations.sys.mjs
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,25 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -105,11 +106,11 @@ and it starts switched off.
 +});
 +
 +const ID = "no-animations@n950.maemo-leste";
-+const SWITCHED_OFF_PREF = "browser.n950.noAnimations.initiallyDisabled";
 +
 +/**
-+ * Installs the built-in "No animations" add-on, switched off the first
-+ * time; it is turned on and off in Add-ons and themes.
++ * Installs the built-in "No animations" add-on, switched on: on the N950,
++ * redrawing an animated page took half the CPU away from scripts. It is
++ * turned off and on in Add-ons and themes.
 + */
 +export const N950NoAnimations = {
 +  async init() {
@@ -118,14 +119,6 @@ and it starts switched off.
 +      "1.0",
 +      "resource://builtin-addons/no-animations/"
 +    );
-+    if (Services.prefs.getBoolPref(SWITCHED_OFF_PREF, false)) {
-+      return;
-+    }
-+    let addon = await lazy.AddonManager.getAddonByID(ID);
-+    if (addon) {
-+      await addon.disable();
-+      Services.prefs.setBoolPref(SWITCHED_OFF_PREF, true);
-+    }
 +  },
 +};
 --- /dev/null
