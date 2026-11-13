@@ -28,7 +28,7 @@ and boot it.
 
 | Part | State |
 | --- | --- |
-| eMMC | VEMMC stays on across a reboot (`0054`): the core used to switch it off at shutdown, and after the software reset ubiboot often found no eMMC until a second reset; as on Harmattan the card is now only put to sleep |
+| eMMC | open: after a reboot from Leste, ubiboot often finds no eMMC until a second reset (the core puts the Hynix eMMC to sleep and switches VEMMC off at shutdown). Keeping VEMMC always on is no fix: Leste itself then no longer found the eMMC after ubiboot's kexec (no power cycle at probe) |
 | Display | OMAP DSI FIFO thresholds for the manually updated panel (`0001`), the 854 visible lines of the Himalaya panel (`0003`), the first frame of a command-mode panel on OMAP3 (`0023`), landscape turned by the panel itself as on Harmattan (`0024`, `0025`) |
 | Touchscreen, LEDs, sensors, fuel gauge | device tree for the maXTouch, LP5523 (channels 0-5 the keyboard light, 8 the white LED, as Harmattan's mce drives them), LIS302DL accelerometer, AK8974 compass, bq27521; OneNAND: boot loader, config, log and moslo read-only so they are never writable from Leste (`0004`); kernel and var writable |
 | Proximity and light | BH1770GLC/SFH7770 device tree support and node (`0005`, `0006`) |
