@@ -1,0 +1,148 @@
+From 88757020dad364e169bc39f0604ee7ae410caee4 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Fri, 13 Nov 2026 16:59:17 +0100
+Subject: [PATCH] Static charging icon with a lightning bolt instead of the
+ animation
+
+While charging, the applet reloaded an icon every second (a 1 s timer,
+gtk_icon_theme_load_icon twice per tick): on the N950 about 5 % CPU for
+as long as the charger was plugged in. It now shows the charge level
+with a lightning bolt (statusarea_battery_chargingNN, NN = 13..100) and
+updates it only when the level changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ status-area-applet-battery.c | 68 +++++++++++++++---------------------
+ 1 file changed, 29 insertions(+), 39 deletions(-)
+
+diff --git a/status-area-applet-battery.c b/status-area-applet-battery.c
+index 0ddb331..7f40691 100644
+--- a/status-area-applet-battery.c
++++ b/status-area-applet-battery.c
+@@ -80,6 +80,7 @@ struct _BatteryStatusAreaItemPrivate {
+   GConfClient *gconf;
+   guint gconf_notify;
+   guint timer_id;
++  gboolean charging_shown;
+   int percentage;
+   int charge_now;
+   int charge_full;
+@@ -151,7 +152,21 @@ battery_status_plugin_update_icon(BatteryStatusAreaItem *plugin, int id)
+     "statusarea_battery_verylow"
+   };
+ 
++  /* while charging: the charge level with a lightning bolt, not an animation */
++  static const char *charging_names[] = {
++    "statusarea_battery_charging13",
++    "statusarea_battery_charging13",
++    "statusarea_battery_charging25",
++    "statusarea_battery_charging38",
++    "statusarea_battery_charging50",
++    "statusarea_battery_charging63",
++    "statusarea_battery_charging75",
++    "statusarea_battery_charging88",
++    "statusarea_battery_charging100"
++  };
++
+   int last;
++  const char *name;
+   GdkPixbuf *pixbuf;
+   GtkIconTheme *icon_theme;
+ 
+@@ -166,13 +181,17 @@ battery_status_plugin_update_icon(BatteryStatusAreaItem *plugin, int id)
+   if (id < 0)
+     id = last;
+ 
++  name = names[id];
++  if (plugin->priv->is_charging && !plugin->priv->is_discharging && id < last)
++    name = charging_names[id];
++
+   icon_theme = gtk_icon_theme_get_default();
+ 
+-  pixbuf = gtk_icon_theme_load_icon(icon_theme, names[id], 18, GTK_ICON_LOOKUP_NO_SVG, NULL);
++  pixbuf = gtk_icon_theme_load_icon(icon_theme, name, 18, GTK_ICON_LOOKUP_NO_SVG, NULL);
+   hd_status_plugin_item_set_status_area_icon(HD_STATUS_PLUGIN_ITEM(plugin), pixbuf);
+   g_object_unref(pixbuf);
+ 
+-  pixbuf = gtk_icon_theme_load_icon(icon_theme, names[id], 48, GTK_ICON_LOOKUP_NO_SVG, NULL);
++  pixbuf = gtk_icon_theme_load_icon(icon_theme, name, 48, GTK_ICON_LOOKUP_NO_SVG, NULL);
+   gtk_image_set_from_pixbuf(GTK_IMAGE(plugin->priv->image), pixbuf);
+   g_object_unref(pixbuf);
+ }
+@@ -312,30 +331,6 @@ battery_status_plugin_update_text(BatteryStatusAreaItem *plugin)
+   gtk_label_set_text(GTK_LABEL(priv->value), text);
+ }
+ 
+-static gboolean
+-battery_status_plugin_animation(gpointer data)
+-{
+-  BatteryStatusAreaItem *plugin = data;
+-  BatteryStatusAreaItemPrivate *priv = plugin->priv;
+-  int bars = priv->bars;
+-
+-  if (!priv->timer_id)
+-    return FALSE;
+-
+-  if (priv->is_charging && priv->is_discharging)
+-    return FALSE;
+-
+-  if (bars == 0 || !priv->show_charge_charging)
+-    priv->charging_idx = 1 + priv->charging_idx % 8; /* id is 1..8 */
+-  else if (bars == 8)
+-    priv->charging_idx = 7 + priv->charging_idx % 2; /* id is 7..8 */
+-  else
+-    priv->charging_idx = bars + (priv->charging_idx - bars + 1) % (9 - bars); /* id is bars..8 */
+-
+-  battery_status_plugin_update_icon(plugin, priv->charging_idx);
+-  return TRUE;
+-}
+-
+ static void
+ battery_status_plugin_charger_connected(BatteryStatusAreaItem *plugin)
+ {
+@@ -354,26 +349,21 @@ battery_status_plugin_animation_start(BatteryStatusAreaItem *plugin, gboolean re
+ {
+   BatteryStatusAreaItemPrivate *priv = plugin->priv;
+ 
++  (void)resume;
++
+   if (priv->display_is_off || !priv->is_charging || priv->is_discharging)
+     return;
+ 
+-  if (priv->timer_id == 0)
+-  {
+-    priv->timer_id = g_timeout_add_seconds(1, battery_status_plugin_animation, plugin);
+-
+-    if (resume)
+-    {
+-      if (priv->charging_idx != 8)
+-        battery_status_plugin_animation(plugin);
+-    }
+-    else
+-      priv->charging_idx = priv->bars;
+-  }
++  /* a static charging icon: no timer reloading icons every second */
++  priv->charging_shown = TRUE;
++  battery_status_plugin_update_icon(plugin, priv->bars > 0 ? priv->bars : 1);
+ }
+ 
+ static void
+ battery_status_plugin_animation_stop(BatteryStatusAreaItem *plugin)
+ {
++  plugin->priv->charging_shown = FALSE;
++
+   if (plugin->priv->timer_id > 0)
+   {
+     g_source_remove(plugin->priv->timer_id);
+@@ -392,7 +382,7 @@ battery_status_plugin_charging_stop(BatteryStatusAreaItem *plugin)
+ {
+   BatteryStatusAreaItemPrivate *priv = plugin->priv;
+ 
+-  if (priv->timer_id > 0 && priv->is_charging && priv->is_discharging)
++  if (priv->charging_shown && priv->is_charging && priv->is_discharging)
+     hildon_banner_show_information(GTK_WIDGET(plugin), NULL, dgettext("osso-dsm-ui", "incf_ib_battery_full"));
+ 
+   battery_status_plugin_animation_stop(plugin);
+-- 
+2.56.0
+
