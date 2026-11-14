@@ -1,0 +1,56 @@
+From b3613ed8ff96a2da5afa808d8a4439594bc231ea Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Sat, 14 Nov 2026 15:55:05 +0100
+Subject: [PATCH] media: omap3isp: let the IOMMU idle while the ISP is not in
+ use
+
+The ISP attaches its IOMMU at probe, and omap-iommu keeps an attached
+IOMMU enabled (a runtime PM reference from attach to detach). Its cam_ick
+then never stops, the CAM power domain stays on, and cpuidle on OMAP3
+uses only C1 while CAM is on ("CAM does not have wakeup capability"): on
+the N950 the core never left ON and the MPU idled in C1 alone as soon as
+the module was loaded, camera in use or not.
+
+Drop the IOMMU's reference when the last ISP reference goes
+(omap_iommu_domain_deactivate) and take it again with the first
+(omap_iommu_domain_activate), as omap_remoteproc does around suspend.
+Attach and detach both happen with the ISP held, so the references
+balance: attach takes one, the final put of probe drops it, remove takes
+it again before detaching.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ drivers/media/platform/ti/omap3isp/isp.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/media/platform/ti/omap3isp/isp.c b/drivers/media/platform/ti/omap3isp/isp.c
+index f51cf6119..080cbf5b1 100644
+--- a/drivers/media/platform/ti/omap3isp/isp.c
++++ b/drivers/media/platform/ti/omap3isp/isp.c
+@@ -1416,6 +1416,9 @@ static struct isp_device *__omap3isp_get(struct isp_device *isp, bool irq)
+ 		goto out;
+ 	}
+ 
++	if (isp->mapping)
++		omap_iommu_domain_activate(isp->mapping->domain);
++
+ 	/* We don't want to restore context before saving it! */
+ 	if (isp->has_context)
+ 		isp_restore_ctx(isp);
+@@ -1461,6 +1464,13 @@ static void __omap3isp_put(struct isp_device *isp, bool save_ctx)
+ 		if (!media_entity_enum_empty(&isp->crashed) ||
+ 		    isp->stop_failure)
+ 			isp_reset(isp);
++		/*
++		 * The IOMMU stays enabled for as long as it is attached, which
++		 * keeps cam_ick running and the CAM power domain on, and
++		 * cpuidle then never goes below C1. Let it idle with the ISP.
++		 */
++		if (isp->mapping)
++			omap_iommu_domain_deactivate(isp->mapping->domain);
+ 		isp_disable_clocks(isp);
+ 	}
+ 	mutex_unlock(&isp->isp_mutex);
+-- 
+2.56.0
+
