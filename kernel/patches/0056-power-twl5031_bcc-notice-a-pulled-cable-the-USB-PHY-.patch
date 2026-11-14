@@ -1,0 +1,96 @@
+From 8b640103619da24d887fcebfd5df11d6ee694224 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Sat, 14 Nov 2026 11:34:29 +0100
+Subject: [PATCH 56/56] power: twl5031_bcc: notice a pulled cable the USB PHY
+ did not report
+
+VBUS removal reaches this driver only as the PHY's USB_EVENT_NONE. That
+event went missing once: the phone booted on the charger, the cable was
+pulled later, and the BCC stayed "online" for hours, so the battery
+applet showed charging on battery.
+
+The watchdog kick, every 5 s while online, now also reads BCC_STS. No
+VBUS in two kicks in a row counts as a disconnect: the switch is opened
+as on USB_EVENT_NONE and the power supply reports the change.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/power/supply/twl5031_bcc.c | 39 +++++++++++++++++++++++++-----
+ 1 file changed, 33 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/power/supply/twl5031_bcc.c b/drivers/power/supply/twl5031_bcc.c
+index 00a190b19..a4a3089f6 100644
+--- a/drivers/power/supply/twl5031_bcc.c
++++ b/drivers/power/supply/twl5031_bcc.c
+@@ -101,6 +101,7 @@ struct twl5031_bcc {
+ 	struct power_supply	*usb;
+ 	unsigned long		event;
+ 	bool			online;
++	int			vbus_misses;	/* kicks in a row that found no VBUS */
+ 	int			current_ma;
+ 	int			detected;	/* BCC_USB_DET_STS_* or 0 */
+ };
+@@ -203,21 +204,46 @@ static int twl5031_bcc_connect(struct twl5031_bcc *bcc)
+ 	return ret < 0 ? ret : det;
+ }
+ 
+-/* keep the BCC's charger watchdog from disabling the charger, as bme does */
++static int twl5031_bcc_disconnect(struct twl5031_bcc *bcc);
++
++/*
++ * Keep the BCC's charger watchdog from disabling the charger, as bme does.
++ * Also notice a pulled cable the USB PHY did not report: its USB_EVENT_NONE
++ * went missing once, and the charger stayed "online" for hours. No VBUS in
++ * two kicks in a row (10 s) counts as a disconnect.
++ */
+ static void twl5031_bcc_kick_work(struct work_struct *work)
+ {
+ 	struct twl5031_bcc *bcc = container_of(to_delayed_work(work),
+ 					       struct twl5031_bcc, kick);
+-	int ctl1;
++	bool gone = false;
++	int ctl1, sts;
+ 
+ 	mutex_lock(&bcc->lock);
+ 	if (bcc->online) {
+-		ctl1 = bcc_read(bcc, BCC_CTRL1);
+-		if (ctl1 >= 0)
+-			bcc_write(bcc, BCC_CTRL1, ctl1 | BCC_CTRL1_WDT_KICK);
+-		schedule_delayed_work(&bcc->kick, msecs_to_jiffies(BCC_KICK_MS));
++		sts = bcc_read(bcc, BCC_STS);
++		if (sts >= 0 && !(sts & BCC_USB_P_STS))
++			bcc->vbus_misses++;
++		else
++			bcc->vbus_misses = 0;
++		if (bcc->vbus_misses >= 2) {
++			twl5031_bcc_disconnect(bcc);
++			bcc->online = false;
++			bcc->current_ma = 0;
++			bcc->vbus_misses = 0;
++			gone = true;
++			dev_info(bcc->dev, "no VBUS without a USB event, charger disconnected (STS %#x)\n",
++				 sts);
++		} else {
++			ctl1 = bcc_read(bcc, BCC_CTRL1);
++			if (ctl1 >= 0)
++				bcc_write(bcc, BCC_CTRL1, ctl1 | BCC_CTRL1_WDT_KICK);
++			schedule_delayed_work(&bcc->kick, msecs_to_jiffies(BCC_KICK_MS));
++		}
+ 	}
+ 	mutex_unlock(&bcc->lock);
++	if (gone)
++		power_supply_changed(bcc->usb);
+ }
+ 
+ static int twl5031_bcc_disconnect(struct twl5031_bcc *bcc)
+@@ -267,6 +293,7 @@ static void twl5031_bcc_work(struct work_struct *work)
+ 	}
+ 	if (online != bcc->online) {
+ 		bcc->online = online;
++		bcc->vbus_misses = 0;
+ 		bcc->current_ma = online ? BCC_USB_CURRENT_MA : 0;
+ 		/* the kick work takes the lock and checks online: no _sync here */
+ 		if (online)
+-- 
+2.56.0
+

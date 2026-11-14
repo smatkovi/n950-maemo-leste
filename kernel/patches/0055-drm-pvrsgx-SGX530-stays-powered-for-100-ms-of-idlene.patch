@@ -1,0 +1,35 @@
+From d5bcbb20f3ef5bb7b6b3677e16630ed928952e25 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Sat, 14 Nov 2026 04:03:39 +0100
+Subject: [PATCH 55/56] drm/pvrsgx: SGX530 stays powered for 100 ms of
+ idleness, not 2 ms
+
+The DDK's active power management powered the SGX down after 2 ms
+without work (SYS_SGX_ACTIVE_POWER_LATENCY_MS for AM3-class parts,
+which covers the OMAP3630). Frames while scrolling or animating come
+15-100 ms apart, so the GPU was switched off and on again between
+nearly every two of them, each time restoring its state. 100 ms, the
+value TI's Android configuration uses, keeps it up during interaction
+and still lets it sleep right after.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../eurasia_km/services4/system/omap/sysconfig-am3.h            | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/pvrsgx/1.17.4948957/eurasia_km/services4/system/omap/sysconfig-am3.h b/drivers/gpu/drm/pvrsgx/1.17.4948957/eurasia_km/services4/system/omap/sysconfig-am3.h
+index 7263c1313..88ff5c057 100644
+--- a/drivers/gpu/drm/pvrsgx/1.17.4948957/eurasia_km/services4/system/omap/sysconfig-am3.h
++++ b/drivers/gpu/drm/pvrsgx/1.17.4948957/eurasia_km/services4/system/omap/sysconfig-am3.h
+@@ -70,7 +70,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ 
+ /* Allow the AP latency to be overridden in the build config */
+ #if !defined(SYS_SGX_ACTIVE_POWER_LATENCY_MS)
+-#define SYS_SGX_ACTIVE_POWER_LATENCY_MS		(2)
++#define SYS_SGX_ACTIVE_POWER_LATENCY_MS		(100)
+ #endif
+ 
+ /* Timer info for debug and timing builds
+-- 
+2.56.0
+
