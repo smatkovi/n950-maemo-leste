@@ -87,6 +87,8 @@ Rectangle {
 
     QmlMozView {
         id: web
+        objectName: "web"
+        nativeWindow: contentWindow
         anchors { left: parent.left; right: parent.right; top: bar.bottom; bottom: parent.bottom }
         active: true
         focus: true
@@ -99,6 +101,7 @@ Rectangle {
     // the shell's switches, over the page's top right corner
     Rectangle {
         id: settingsPanel
+        objectName: "settingsPanel"
         visible: false
         z: 1
         anchors { right: parent.right; top: bar.bottom }

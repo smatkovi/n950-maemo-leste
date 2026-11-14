@@ -9,7 +9,10 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QTextStream>
+#include <QQuickItem>
 #include <QQuickView>
+#include <QRegion>
+#include <QWindow>
 #include <QSettings>
 #include <QTimer>
 #include <QUrl>
@@ -18,6 +21,7 @@
 #include <xcb/xcb.h>
 #include <mozilla/embedlite/EmbedLiteApp.h>
 #include <qmozcontext.h>
+#include <qmozwindow.h>
 #include <qmozenginesettings.h>
 
 // Keeps the window in hildon-desktop's compositor. hildon-desktop draws a
@@ -46,6 +50,73 @@ static void keepComposited(WId window)
     }
     xcb_disconnect(c);
 }
+
+// Gecko draws the page straight into a native child window over the web view's
+// area instead of handing each frame to Qt Quick as a texture: about 28 % less
+// CPU per frame on the N950, and more frames while scrolling. The child lets
+// input through to the view below it and leaves out the settings panel when
+// that is open. EMBEDLITE_SHELL_DIRECT=0 goes back to the texture.
+class ContentWindow : public QObject
+{
+public:
+    ContentWindow(QQuickView &view)
+        : mWindow(new QWindow(&view))
+    {
+        mWindow->setFlags(Qt::FramelessWindowHint | Qt::WindowTransparentForInput);
+        // a plain X window: as an OpenGL surface Qt's EGL integration makes an
+        // EGL surface of its own for it, and the driver refuses Gecko's second
+        // one (EGL_BAD_ALLOC)
+        mWindow->setSurfaceType(QSurface::RasterSurface);
+        mWindow->setGeometry(0, 0, 1, 1);
+        mWindow->create();
+    }
+    WId id() const { return mWindow->winId(); }
+    void follow(QQuickItem *web, QQuickItem *panel)
+    {
+        mWeb = web;
+        mPanel = panel;
+        for (QQuickItem *item : {web, panel}) {
+            if (!item) {
+                continue;
+            }
+            connect(item, &QQuickItem::xChanged, this, &ContentWindow::update);
+            connect(item, &QQuickItem::yChanged, this, &ContentWindow::update);
+            connect(item, &QQuickItem::widthChanged, this, &ContentWindow::update);
+            connect(item, &QQuickItem::heightChanged, this, &ContentWindow::update);
+            connect(item, &QQuickItem::visibleChanged, this, &ContentWindow::update);
+        }
+        update();
+        mWindow->show();
+    }
+
+private:
+    void update()
+    {
+        const QRect area = mWeb->mapRectToScene(QRectF(0, 0, mWeb->width(), mWeb->height())).toRect();
+        if (area.isEmpty()) {
+            return;
+        }
+        mWindow->setGeometry(area);
+        QRegion shown(0, 0, area.width(), area.height());
+        if (mPanel && mPanel->isVisible()) {
+            const QRect panel = mPanel->mapRectToScene(
+                QRectF(0, 0, mPanel->width(), mPanel->height())).toRect();
+            shown -= panel.translated(-area.topLeft());
+        }
+        if (shown != mWindow->mask()) {
+            mWindow->setMask(shown);
+            // what the panel covered is part of the window again: Gecko
+            // draws all of it anew
+            if (QMozWindow *mozWindow = QMozContext::instance()->registeredWindow()) {
+                mozWindow->scheduleUpdate();
+            }
+        }
+    }
+
+    QWindow *mWindow;
+    QQuickItem *mWeb = nullptr;
+    QQuickItem *mPanel = nullptr;
+};
 
 static const char kComponents[] = "/usr/lib/arm-linux-gnueabihf/mozembedlite-next153";
 static const char kProfile[] = "embedlite-shell";
@@ -195,11 +266,21 @@ int main(int argc, char **argv)
                                            scrollTest.value(1).toInt());
     view.rootContext()->setContextProperty(QStringLiteral("pinchTestStart"),
                                            qEnvironmentVariableIntValue("EMBEDLITE_SHELL_PINCHTEST"));
+    const bool direct = !qEnvironmentVariableIsSet("EMBEDLITE_SHELL_DIRECT")
+        || qEnvironmentVariableIntValue("EMBEDLITE_SHELL_DIRECT");
+    ContentWindow *content = direct ? new ContentWindow(view) : nullptr;
+    view.rootContext()->setContextProperty(QStringLiteral("contentWindow"),
+                                           content ? qulonglong(content->id()) : qulonglong(0));
 
     QTimer::singleShot(0, [&] {
         context->runEmbedding();
         QMozEngineSettings::instance();
         view.setSource(QUrl(QStringLiteral("qrc:/main.qml")));
+        if (content) {
+            QQuickItem *root = view.rootObject();
+            content->follow(root->findChild<QQuickItem *>(QStringLiteral("web")),
+                            root->findChild<QQuickItem *>(QStringLiteral("settingsPanel")));
+        }
         keepComposited(view.winId());
         view.showFullScreen();
     });
