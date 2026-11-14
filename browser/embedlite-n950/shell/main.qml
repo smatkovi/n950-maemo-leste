@@ -115,7 +115,8 @@ Rectangle {
             anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 6 }
             Repeater {
                 model: [
-                    { label: "Animationen", key: "animations" }
+                    { label: "Animationen", key: "animations" },
+                    { label: "Daten sparen (2G)", key: "dataSaver" }
                 ]
                 Item {
                     width: switches.width; height: 56

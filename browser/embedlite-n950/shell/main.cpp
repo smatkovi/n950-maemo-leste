@@ -174,8 +174,20 @@ class ShellSettings : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool animations READ animations WRITE setAnimations NOTIFY animationsChanged)
+    Q_PROPERTY(bool dataSaver READ dataSaver WRITE setDataSaver NOTIFY dataSaverChanged)
 
 public:
+    // for 2G: nothing fetched that a page can do without
+    bool dataSaver() const { return m_settings.value(QStringLiteral("dataSaver"), false).toBool(); }
+    void setDataSaver(bool on)
+    {
+        if (on == dataSaver())
+            return;
+        m_settings.setValue(QStringLiteral("dataSaver"), on);
+        apply();
+        Q_EMIT dataSaverChanged();
+    }
+
     bool animations() const { return m_settings.value(QStringLiteral("animations"), false).toBool(); }
     void setAnimations(bool on)
     {
@@ -202,10 +214,27 @@ public:
             context->GetApp()->LoadGlobalStyleSheet(uri.constData(), !on);
             m_noMotionSheet = !on;
         }
+
+        // On 2G every request costs seconds: no web fonts (icon fonts show as
+        // boxes), no prefetching or connections on spec, no second connection
+        // raced against a slow first one (after 250 ms, which on EDGE is
+        // always), no HTTP/3 (its handshake and loss recovery run in user
+        // space, on this CPU), four connections per server, no video that
+        // starts by itself. The other value is the engine's default.
+        const bool save = dataSaver();
+        engine->setPreference(QStringLiteral("gfx.downloadable_fonts.enabled"), !save);
+        engine->setPreference(QStringLiteral("network.prefetch-next"), !save);
+        engine->setPreference(QStringLiteral("network.dns.disablePrefetch"), save);
+        engine->setPreference(QStringLiteral("network.http.speculative-parallel-limit"), save ? 0 : 20);
+        engine->setPreference(QStringLiteral("network.http.connection-retry-timeout"), save ? 0 : 250);
+        engine->setPreference(QStringLiteral("network.http.http3.enable"), !save);
+        engine->setPreference(QStringLiteral("network.http.max-persistent-connections-per-server"), save ? 4 : 6);
+        engine->setPreference(QStringLiteral("media.autoplay.default"), save ? 5 : 1);
     }
 
 Q_SIGNALS:
     void animationsChanged();
+    void dataSaverChanged();
 
 private:
     QSettings m_settings{QStringLiteral("embedlite-shell"), QStringLiteral("settings")};
