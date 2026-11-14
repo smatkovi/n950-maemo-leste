@@ -41,4 +41,7 @@ if [ "$(cat $B)" != "$want" ]; then
 	fi
 fi
 [ "$(cat $G/scaling_max_freq)" = "$cap" ] || echo "$cap" > $G/scaling_max_freq 2>/dev/null
-[ "$(cat $G/scaling_governor)" = "$gov" ] || echo "$gov" > $G/scaling_governor
+# a governor the running kernel lacks would leave the CPU in powersave
+[ "$(cat $G/scaling_governor)" = "$gov" ] ||
+	echo "$gov" > $G/scaling_governor 2>/dev/null ||
+	echo ondemand > $G/scaling_governor
