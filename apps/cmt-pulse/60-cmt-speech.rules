@@ -1,0 +1,4 @@
+# The modem's speech data: cmt_pulse runs in the user's session and opens
+# /dev/cmt_speech while a call is active (as leste-config-n900's
+# 10-nokia-modem.rules)
+KERNEL=="cmt_speech", MODE:="0660", OWNER:="root", GROUP:="audio"
