@@ -10,7 +10,20 @@
 # does not wait for the old ofonod to exit, so start-stop-daemon --oknodo
 # saw the dying one and started none (a slow boot ran this after the modem
 # was online and left the phone without ofono).
+#
+# icd2 likewise only when it runs without managing wlan0 (wpa_supplicant,
+# which icd2 drives, then has no such interface). Restarting a connected
+# icd2 dropped the connection, and as "restart" does not wait for the old
+# icd2 to exit either, dsmetool refused the new one ("icd2 failed to
+# start"): on a slow boot the phone was left without Wi-Fi until icd2 was
+# restarted by hand.
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+icd2_has_wlan() {
+	dbus-send --system --print-reply --dest=fi.w1.wpa_supplicant1 \
+		/fi/w1/wpa_supplicant1 fi.w1.wpa_supplicant1.GetInterface \
+		string:wlan0 >/dev/null 2>&1
+}
 
 modem_powered() {
 	dbus-send --system --print-reply --dest=org.ofono / \
@@ -39,6 +52,20 @@ modem_powered() {
 			rc-service ofono start
 		fi
 	fi
-	[ -e /sys/class/net/wlan0 ] && rc-service icd2 restart
+	# an icd2 that is not up yet starts with wlan0 in place
+	if [ -e /sys/class/net/wlan0 ] && pidof icd2 >/dev/null; then
+		for i in $(seq 1 30); do
+			icd2_has_wlan && break
+			sleep 1
+		done
+		if ! icd2_has_wlan; then
+			rc-service icd2 stop
+			for i in $(seq 1 20); do
+				pidof icd2 >/dev/null || break
+				sleep 1
+			done
+			rc-service icd2 start
+		fi
+	fi
 ) </dev/null >/dev/null 2>&1 &
 exit 0
