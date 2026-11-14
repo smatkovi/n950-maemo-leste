@@ -1,4 +1,4 @@
-From 2f3a97631167d40c8ba63b0ad917e3e8862f5958 Mon Sep 17 00:00:00 2001
+From 0c4bf3554632a76df2754f313409e3f07fb51598 Mon Sep 17 00:00:00 2001
 From: Sebastian Matkovich <smatkovi@users.noreply.github.com>
 Date: Sat, 14 Nov 2026 15:09:12 +0100
 Subject: [PATCH] wlan: let wpa_supplicant reconnect before closing the
@@ -19,12 +19,12 @@ is reported and the IP configuration stays; otherwise, or when it goes
 for (link_down) is reported at once as before, and a scan during the wait
 does not remove the network being reconnected to.
 ---
- src/wlan.c | 96 +++++++++++++++++++++++++++++++++++++++++++++---------
+ src/wlan.c | 98 +++++++++++++++++++++++++++++++++++++++++++++---------
  src/wlan.h |  7 ++++
- 2 files changed, 87 insertions(+), 16 deletions(-)
+ 2 files changed, 89 insertions(+), 16 deletions(-)
 
 diff --git a/src/wlan.c b/src/wlan.c
-index afcef8b..57d87ad 100644
+index afcef8b..0bd614e 100644
 --- a/src/wlan.c
 +++ b/src/wlan.c
 @@ -80,6 +80,12 @@
@@ -40,7 +40,7 @@ index afcef8b..57d87ad 100644
  static void wlan_bring_up(const gchar * network_type,
                            const guint network_attrs,
                            const gchar * network_id,
-@@ -212,9 +218,14 @@ static void wlan_take_down(const gchar * network_type,
+@@ -212,9 +218,16 @@ static void wlan_take_down(const gchar * network_type,
  {
      struct wlan_context *ctx = get_wlan_context_from_icd(private);
  
@@ -49,14 +49,16 @@ index afcef8b..57d87ad 100644
  
 +    ctx->link_down_requested = TRUE;
 +    if (ctx->g_reconnect_timer) {
++        /* the connection was lost already; idle, as without the wait */
 +        g_source_remove(ctx->g_reconnect_timer);
 +        ctx->g_reconnect_timer = 0;
++        wlan_set_state(ctx, STATE_IDLE);
 +    }
 +
      wpaicd_remove_all_networks();
      link_down_cb(ICD_NW_SUCCESS_NEXT_LAYER, link_down_cb_token);
  
-@@ -259,6 +270,8 @@ static void wlan_bring_up(const gchar * network_type,
+@@ -259,6 +272,8 @@ static void wlan_bring_up(const gchar * network_type,
  
      WPALOG_INFO("wlan_bring_up: %s", network_id);
  
@@ -65,7 +67,7 @@ index afcef8b..57d87ad 100644
      GConfNetwork *net = get_gconf_network_iapname(ctx->gconf_client, network_id);
      if (net == NULL) {
          WPALOG_ERR("Cannot connect to network: net == NULL");
-@@ -424,6 +437,41 @@ static void start_assoc_timer(struct wlan_context *ctx)
+@@ -424,6 +439,41 @@ static void start_assoc_timer(struct wlan_context *ctx)
              g_timeout_add_seconds(30, wlan_associate_timeout, (void*)ctx);
  }
  
@@ -107,7 +109,7 @@ index afcef8b..57d87ad 100644
  static void wlan_state_change_cb(const char *state, void *data)
  {
      struct wlan_context *ctx = get_wlan_context_from_wpaicd(data);
-@@ -445,28 +493,42 @@ static void wlan_state_change_cb(const char *state, void *data)
+@@ -445,28 +495,42 @@ static void wlan_state_change_cb(const char *state, void *data)
       */
  
      if (strcmp(state, "associating") == 0) {
@@ -164,7 +166,7 @@ index afcef8b..57d87ad 100644
  
          if (ctx->link_up_cb) {
              WPALOG_DEBUG(WLAN "SENDING SUCCESS NEXT LAYER");
-@@ -678,7 +740,7 @@ static void wlan_start_search(const gchar * network_type,
+@@ -678,7 +742,7 @@ static void wlan_start_search(const gchar * network_type,
      if (ctx->state == STATE_IDLE) {
          wpaicd_remove_all_networks();
          try_disconnect_wpa_control(ctx);
@@ -173,7 +175,7 @@ index afcef8b..57d87ad 100644
          /* TODO: Let's maybe just not remove networks when we're trying to
           * connect, or at least make really sure we're not removing the network
           * we're connecting to. */
-@@ -758,6 +820,8 @@ static void wlan_destruct(gpointer * private)
+@@ -758,6 +822,8 @@ static void wlan_destruct(gpointer * private)
  
      ENTER;
  

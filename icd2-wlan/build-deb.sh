@@ -17,7 +17,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$(realpath -m "${1:?usage: SYSROOT=<armhf root> build-deb.sh OUTDIR}")
 SYSROOT=$(cd "${SYSROOT:?set SYSROOT=<armhf root>}" && pwd)
-VERSION=0.1.20+5m7n950.1
+VERSION=0.1.20+5m7n950.2
 ICD_VERSION=0.99.1
 GH=https://github.com/maemo-leste
 SRCS="libicd-network-wpasupplicant:bee40ad46692 icd2:c3e9ae13f3f4

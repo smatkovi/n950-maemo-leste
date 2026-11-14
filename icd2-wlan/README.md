@@ -3,7 +3,7 @@
 A patch on Leste's WLAN module for icd2,
 [maemo-leste/libicd-network-wpasupplicant](https://github.com/maemo-leste/libicd-network-wpasupplicant)
 0.1.20 (commit bee40ad), and a script that builds it as the package
-`libicd-network-wpasupplicant` 0.1.20+5m7n950.1.
+`libicd-network-wpasupplicant` 0.1.20+5m7n950.2.
 
 | File | What |
 | --- | --- |
@@ -26,11 +26,24 @@ With the patch a disconnection icd2 did not ask for starts a 15 s timer. If
 wpa_supplicant reaches `completed` in that time, icd2 is not told and the IP
 configuration stays. If it does not, or wpa_supplicant goes `inactive`, the
 connection is closed as before. A disconnection icd2 asked for is handled
-as before, and a scan in the meantime keeps the network being reconnected to.
+as before (if icd2 takes the link down during the wait, the module goes
+idle, as it would have been without the wait), and a scan in the meantime
+keeps the network being reconnected to.
 
-Tested on the phone 2026-11-14 with `wpa_cli disconnect` followed by
-`reconnect`. With the old module icd2 closed the connection (dnsmasq lost its
-server). With the new one the connection, the address and the DNS server
-stayed. Both runs had about 4 s without answers, because `reconnect` scans
-first; after a real deauthentication wpa_supplicant needs no scan.
-What causes the AP's drops is still open.
+Tested on the phone 2026-11-14:
+
+- `wpa_cli disconnect` + `reconnect`: with the old module icd2 closed the
+  connection (wpa_supplicant `NETWORK-REMOVED`, dnsmasq lost its server);
+  with the new one the connection, the address and the DNS server stayed.
+  Both runs had about 4 s without answers, because `reconnect` scans first.
+- `wpa_cli disconnect` alone: after 15 s icd2 closed the connection and
+  connected again by itself (22 s in all).
+- a real drop by the AP at 15:27:16 (`Reason: 7`), with the patch: associated
+  again 0.4 s later, no second disconnection, no `NETWORK-REMOVED`, the DNS
+  server stayed.
+
+Still open: before that drop the phone had not answered for about three
+minutes while it was still associated. The AP's `Reason: 7` seems to end
+such a stall (the AP had dropped the station meanwhile), so the stalls
+themselves, not the 12 s, are the larger problem; power save is the main
+suspect. What makes the AP drop the station is open too.
