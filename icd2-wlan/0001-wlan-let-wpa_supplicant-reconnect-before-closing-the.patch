@@ -1,0 +1,205 @@
+From 2f3a97631167d40c8ba63b0ad917e3e8862f5958 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <smatkovi@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 15:09:12 +0100
+Subject: [PATCH] wlan: let wpa_supplicant reconnect before closing the
+ connection
+
+When the AP drops the station (a deauthentication, for example "Reason 7"
+from an AP that had forgotten it) wpa_supplicant reports "disconnected"
+and reconnects by itself, usually within half a second. The module closed
+the connection at once, though: icd2 took the IP layer down, removed the
+network from wpa_supplicant (which disconnected the already restored link
+"by local choice") and connected again about 10 s later, 12 s without
+network for every such drop.
+
+Now an unrequested disconnection while connected starts a 15 s timer
+instead. If wpa_supplicant gets back to "completed" in that time nothing
+is reported and the IP configuration stays; otherwise, or when it goes
+"inactive", the connection is closed as before. A disconnection icd2 asked
+for (link_down) is reported at once as before, and a scan during the wait
+does not remove the network being reconnected to.
+---
+ src/wlan.c | 96 +++++++++++++++++++++++++++++++++++++++++++++---------
+ src/wlan.h |  7 ++++
+ 2 files changed, 87 insertions(+), 16 deletions(-)
+
+diff --git a/src/wlan.c b/src/wlan.c
+index afcef8b..57d87ad 100644
+--- a/src/wlan.c
++++ b/src/wlan.c
+@@ -80,6 +80,12 @@
+ #endif
+ #define WLAN_PRIORITY 20
+ 
++/* How long wpa_supplicant may take to get back to the AP after an
++ * unrequested disconnection (an AP's deauthentication, a lost beacon)
++ * before icd2 is told and closes the connection. Reconnecting usually takes
++ * well under a second, closing and reopening through icd2 about 12 s. */
++#define RECONNECT_TIMEOUT 15
++
+ static void wlan_bring_up(const gchar * network_type,
+                           const guint network_attrs,
+                           const gchar * network_id,
+@@ -212,9 +218,14 @@ static void wlan_take_down(const gchar * network_type,
+ {
+     struct wlan_context *ctx = get_wlan_context_from_icd(private);
+ 
+-    (void)ctx;
+     WPALOG_INFO("wlan_take_down");
+ 
++    ctx->link_down_requested = TRUE;
++    if (ctx->g_reconnect_timer) {
++        g_source_remove(ctx->g_reconnect_timer);
++        ctx->g_reconnect_timer = 0;
++    }
++
+     wpaicd_remove_all_networks();
+     link_down_cb(ICD_NW_SUCCESS_NEXT_LAYER, link_down_cb_token);
+ 
+@@ -259,6 +270,8 @@ static void wlan_bring_up(const gchar * network_type,
+ 
+     WPALOG_INFO("wlan_bring_up: %s", network_id);
+ 
++    ctx->link_down_requested = FALSE;
++
+     GConfNetwork *net = get_gconf_network_iapname(ctx->gconf_client, network_id);
+     if (net == NULL) {
+         WPALOG_ERR("Cannot connect to network: net == NULL");
+@@ -424,6 +437,41 @@ static void start_assoc_timer(struct wlan_context *ctx)
+             g_timeout_add_seconds(30, wlan_associate_timeout, (void*)ctx);
+ }
+ 
++static void wlan_close_connected(struct wlan_context *ctx)
++{
++    wlan_set_state(ctx, STATE_IDLE);
++
++    ctx->close_cb(ICD_NW_ERROR,
++                  ICD_DBUS_ERROR_NETWORK_ERROR,
++                  ctx->stored_network_type,
++                  ctx->stored_network_attrs, ctx->stored_network_id);
++
++    ctx->stored_network_type = NULL;
++    ctx->stored_network_id = NULL;
++    ctx->stored_network_attrs = 0;
++}
++
++static void stop_reconnect_timer(struct wlan_context *ctx)
++{
++    if (ctx->g_reconnect_timer) {
++        g_source_remove(ctx->g_reconnect_timer);
++        ctx->g_reconnect_timer = 0;
++    }
++}
++
++static gboolean wlan_reconnect_timeout(void *data)
++{
++    struct wlan_context *ctx = (struct wlan_context*)data;
++
++    WPALOG_INFO("wlan_reconnect_timeout: no connection after %d s",
++                RECONNECT_TIMEOUT);
++
++    ctx->g_reconnect_timer = 0;
++    wlan_close_connected(ctx);
++
++    return FALSE;
++}
++
+ static void wlan_state_change_cb(const char *state, void *data)
+ {
+     struct wlan_context *ctx = get_wlan_context_from_wpaicd(data);
+@@ -445,28 +493,42 @@ static void wlan_state_change_cb(const char *state, void *data)
+      */
+ 
+     if (strcmp(state, "associating") == 0) {
+-        wlan_set_state(ctx, STATE_CONNECTING);
+-        start_assoc_timer(ctx);
++        /* while reconnecting the reconnect timer bounds the attempt */
++        if (!ctx->g_reconnect_timer) {
++            wlan_set_state(ctx, STATE_CONNECTING);
++            start_assoc_timer(ctx);
++        }
+     } else if (strcmp(state, "disconnected") == 0) {
+ 
+-        if (ctx->state == STATE_CONNECTED) {
+-            wlan_set_state(ctx, STATE_IDLE);
+-
+-            ctx->close_cb(ICD_NW_ERROR,
+-                          ICD_DBUS_ERROR_NETWORK_ERROR,
+-                          ctx->stored_network_type,
+-                          ctx->stored_network_attrs, ctx->stored_network_id);
+-
+-            ctx->stored_network_type = NULL;
+-            ctx->stored_network_id = NULL;
+-            ctx->stored_network_attrs = 0;
++        if (ctx->state == STATE_CONNECTED && !ctx->link_down_requested) {
++            /* not asked for: wpa_supplicant reconnects by itself, so the
++             * connection (and its IP configuration) stays up for a while */
++            if (!ctx->g_reconnect_timer) {
++                WPALOG_INFO("wlan_state_change_cb: AP lost, waiting %d s "
++                            "for wpa_supplicant to reconnect",
++                            RECONNECT_TIMEOUT);
++                ctx->g_reconnect_timer =
++                    g_timeout_add_seconds(RECONNECT_TIMEOUT,
++                                          wlan_reconnect_timeout, (void*)ctx);
++            }
++        } else if (ctx->state == STATE_CONNECTED) {
++            wlan_close_connected(ctx);
+         } else
+             start_assoc_timer(ctx);
+     } else if (strcmp(state, "inactive") == 0) {
+         stop_assoc_timer (ctx);
+-        wlan_set_state(ctx, STATE_IDLE);
++        if (ctx->g_reconnect_timer) {
++            /* no network left to reconnect to */
++            stop_reconnect_timer(ctx);
++            wlan_close_connected(ctx);
++        } else
++            wlan_set_state(ctx, STATE_IDLE);
+     } else if (strcmp(state, "completed") == 0) {
+         stop_assoc_timer(ctx);
++        if (ctx->g_reconnect_timer) {
++            WPALOG_INFO("wlan_state_change_cb: reconnected to the AP");
++            stop_reconnect_timer(ctx);
++        }
+ 
+         if (ctx->link_up_cb) {
+             WPALOG_DEBUG(WLAN "SENDING SUCCESS NEXT LAYER");
+@@ -678,7 +740,7 @@ static void wlan_start_search(const gchar * network_type,
+     if (ctx->state == STATE_IDLE) {
+         wpaicd_remove_all_networks();
+         try_disconnect_wpa_control(ctx);
+-    } else if (ctx->state == STATE_CONNECTED) {
++    } else if (ctx->state == STATE_CONNECTED && !ctx->g_reconnect_timer) {
+         /* TODO: Let's maybe just not remove networks when we're trying to
+          * connect, or at least make really sure we're not removing the network
+          * we're connecting to. */
+@@ -758,6 +820,8 @@ static void wlan_destruct(gpointer * private)
+ 
+     ENTER;
+ 
++    stop_reconnect_timer(ctx);
++    stop_assoc_timer(ctx);
+     wpaicd_free();
+     close_wpa_control(ctx);
+     g_object_unref(ctx->gconf_client);
+diff --git a/src/wlan.h b/src/wlan.h
+index 6bd4293..2613bc3 100644
+--- a/src/wlan.h
++++ b/src/wlan.h
+@@ -132,6 +132,13 @@ struct wlan_context {
+ 
+     guint g_association_timer;
+ 
++    /* Running while wpa_supplicant reconnects on its own after losing the
++     * AP; icd2 is told only if that does not succeed in time */
++    guint g_reconnect_timer;
++
++    /* icd2 asked for the link to go down: its disconnection is expected */
++    gboolean link_down_requested;
++
+     struct wpa_ctrl *wpasup_ctrl;
+ #if 0
+     struct icd_nw_api *network_api;
+-- 
+2.56.0
+
