@@ -62,6 +62,7 @@ Rectangle {
                     var u = text.trim()
                     if (u.indexOf("://") < 0 && u.indexOf("about:") !== 0)
                         u = "https://" + u
+                    shellSettings.pageHost(root.hostOf(u))
                     web.url = u
                     web.forceActiveFocus()
                 }
@@ -83,6 +84,26 @@ Rectangle {
             address.forceActiveFocus()
             address.selectAll()
         }
+    }
+
+    // the host of an http(s) address, "" for anything else
+    function hostOf(url) {
+        var m = /^https?:\/\/([^\/:?#]+)/i.exec(String(url))
+        return m ? m[1].toLowerCase() : ""
+    }
+
+    // JavaScript is switched per site: a page that arrives through a link or
+    // a redirect at a site with the other setting is loaded once more with it
+    Connections {
+        target: web
+        onUrlChanged: {
+            if (shellSettings.pageHost(root.hostOf(web.url)))
+                web.reload()
+        }
+    }
+    Connections {
+        target: shellSettings
+        onReloadWanted: web.reload()
     }
 
     QmlMozView {
@@ -116,6 +137,8 @@ Rectangle {
             Repeater {
                 model: [
                     { label: "Animationen", key: "animations" },
+                    { label: "Werbung blockieren", key: "adblock" },
+                    { label: "JavaScript (diese Seite)", key: "scripts" },
                     { label: "Daten sparen (2G)", key: "dataSaver" }
                 ]
                 Item {

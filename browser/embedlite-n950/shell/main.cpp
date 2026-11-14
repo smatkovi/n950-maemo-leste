@@ -175,8 +175,51 @@ class ShellSettings : public QObject
     Q_OBJECT
     Q_PROPERTY(bool animations READ animations WRITE setAnimations NOTIFY animationsChanged)
     Q_PROPERTY(bool dataSaver READ dataSaver WRITE setDataSaver NOTIFY dataSaverChanged)
+    Q_PROPERTY(bool adblock READ adblock WRITE setAdblock NOTIFY adblockChanged)
+    Q_PROPERTY(bool scripts READ scripts WRITE setScripts NOTIFY scriptsChanged)
 
 public:
+    // requests to ad and tracking servers cancelled (EmbedLiteAdBlock.sys.mjs)
+    bool adblock() const { return m_settings.value(QStringLiteral("adblock"), true).toBool(); }
+    void setAdblock(bool on)
+    {
+        if (on == adblock())
+            return;
+        m_settings.setValue(QStringLiteral("adblock"), on);
+        apply();
+        Q_EMIT adblockChanged();
+    }
+    // JavaScript for the site of the current page; sites it is switched off
+    // for are remembered. Takes effect when a page is loaded.
+    bool scripts() const { return !noScriptHosts().contains(m_host); }
+    void setScripts(bool on)
+    {
+        if (on == scripts() || m_host.isEmpty())
+            return;
+        QStringList hosts = noScriptHosts();
+        if (on)
+            hosts.removeAll(m_host);
+        else
+            hosts.append(m_host);
+        m_settings.setValue(QStringLiteral("noScriptHosts"), hosts);
+        Q_EMIT scriptsChanged();
+        if (applyScripts())
+            Q_EMIT reloadWanted();
+    }
+    // The shell names the host of the page it shows or is about to load;
+    // true when JavaScript got switched for it, i.e. a page of that host
+    // which is already loading has to be loaded again.
+    Q_INVOKABLE bool pageHost(const QString &host)
+    {
+        if (host == m_host)
+            return false;
+        const bool before = scripts();
+        m_host = host;
+        if (scripts() != before)
+            Q_EMIT scriptsChanged();
+        return applyScripts();
+    }
+
     // for 2G: nothing fetched that a page can do without
     bool dataSaver() const { return m_settings.value(QStringLiteral("dataSaver"), false).toBool(); }
     void setDataSaver(bool on)
@@ -230,14 +273,38 @@ public:
         engine->setPreference(QStringLiteral("network.http.http3.enable"), !save);
         engine->setPreference(QStringLiteral("network.http.max-persistent-connections-per-server"), save ? 4 : 6);
         engine->setPreference(QStringLiteral("media.autoplay.default"), save ? 5 : 1);
+        // "Save-Data: on" with every request: some sites answer with lighter pages
+        engine->setPreference(QStringLiteral("embedlite.save-data"), save);
+
+        engine->setPreference(QStringLiteral("embedlite.adblock.enabled"), adblock());
+        // the profile may hold "off" from a site the last session ended on
+        applyScripts(true);
     }
 
 Q_SIGNALS:
     void animationsChanged();
     void dataSaverChanged();
+    void adblockChanged();
+    void scriptsChanged();
+    void reloadWanted();
 
 private:
+    QStringList noScriptHosts() const
+    {
+        return m_settings.value(QStringLiteral("noScriptHosts")).toStringList();
+    }
+    bool applyScripts(bool always = false)
+    {
+        if (!QMozContext::instance()->isInitialized() || (!always && scripts() == m_scriptsApplied))
+            return false;
+        m_scriptsApplied = scripts();
+        QMozEngineSettings::instance()->setPreference(QStringLiteral("javascript.enabled"), m_scriptsApplied);
+        return true;
+    }
+
     QSettings m_settings{QStringLiteral("embedlite-shell"), QStringLiteral("settings")};
+    QString m_host;
+    bool m_scriptsApplied = true;
     bool m_noMotionSheet = false;
 };
 

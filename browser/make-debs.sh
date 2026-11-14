@@ -9,6 +9,7 @@
 #     QTMOZEMBED   qtmozembed build tree (src/, qmlplugin5/)
 #     SHELL_BIN    the shell built from embedlite-n950/shell
 #     SHADER_CACHE .tgz of shader-cache/ made by gen-shader-cache.sh on the phone
+#     ADBLOCK_LIST optional: a copy of Peter Lowe's host list (else fetched)
 #
 #   SYSROOT=<armhf root> bash browser/make-debs.sh firefox VERSION OUTDIR
 #     FF_TARBALL   firefox-n950 package (firefox-n950/build.sh package)
@@ -58,6 +59,18 @@ embedlite)
 	cp -a "$QTMOZEMBED"/qmlplugin5/libqmlmozembedpluginqt5.so "$QTMOZEMBED"/qmlplugin5/qmldir \
 		"$R/$LIB/qt5/qml/Qt5MozillaNext153/"
 	install -m 755 "${SHELL_BIN:?}" "$R/usr/bin/embedlite-shell"
+	# the ad blocker's host list (EmbedLiteAdBlock.sys.mjs reads every .txt in
+	# this directory): Peter Lowe's ad and tracking server list, fetched here
+	# with its header, or ADBLOCK_LIST=<a copy of it>
+	mkdir -p "$R/usr/share/embedlite-n950/adblock"
+	if [ -n "${ADBLOCK_LIST:-}" ]; then
+		install -m 644 "$ADBLOCK_LIST" "$R/usr/share/embedlite-n950/adblock/pgl.txt"
+	else
+		curl -fsSL -o "$R/usr/share/embedlite-n950/adblock/pgl.txt" \
+			'https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=1&mimetype=plaintext'
+	fi
+	[ "$(grep -c '^127\.0\.0\.1 ' "$R/usr/share/embedlite-n950/adblock/pgl.txt")" -gt 1000 ] ||
+		{ echo "the ad block list looks incomplete" >&2; exit 1; }
 	install -m 644 "$HERE/embedlite-n950/shell/embedlite-shell.desktop" "$R/usr/share/applications/hildon/"
 	install -m 644 "$HERE/embedlite-n950/shell/embedlite-shell-48.png" "$R/usr/share/icons/hicolor/48x48/apps/embedlite-shell.png"
 	install -m 644 "$HERE/embedlite-n950/shell/embedlite-shell-64.png" "$R/usr/share/icons/hicolor/64x64/apps/embedlite-shell.png"
@@ -75,8 +88,9 @@ Homepage: https://github.com/smatkovi/n950-maemo-leste
 Description: Gecko ESR 153 browser engine (EmbedLite) and test shell for the N950
  The EmbedLite engine with WebRender on the SGX530 (OpenGL ES 2.0), its
  Qt 5 binding qtmozembed and QML plugin, and "Browser (EmbedLite)", a
- minimal browser shell: address line, back/forward/reload, settings for
- animations and edge anti-aliasing. WebRender's shader programs come
+ minimal browser shell: address line, back/forward/reload, switches for
+ animations, ad blocking (by host name, Peter Lowe's list), JavaScript
+ per site and data saving on 2G. WebRender's shader programs come
  compiled for the SGX530.
 CTL
 	;;
