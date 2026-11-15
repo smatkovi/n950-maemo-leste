@@ -1,0 +1,50 @@
+From b33a35cd59ec1ba48e26ad470370c97e752ff019 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Sun, 15 Nov 2026 19:57:40 +0100
+Subject: [PATCH] mmc: core: deselect instead of sleep at shutdown (N950
+ eMMC/ubiboot)
+
+At shutdown mmc_shutdown() -> _mmc_suspend(MMC_POWEROFF_SHUTDOWN) put the
+card into sleep (CMD5) when it cannot do a power-off notification, as the
+N950's Hynix eMMC (ext_csd rev >= 3, no MMC_CAP2_POWEROFF_NOTIFY) cannot.
+The card keeps that sleep state over the reboot: the board switches off
+VEMMC (the card's VCC) but leaves VCCQ on, and ubiboot's old (2.6.32) MMC
+driver then does not wake the card and reports no eMMC, so the user has to
+reset a second time to boot. Keeping VEMMC on is no fix either (the card
+then stays asleep with no power cycle and Leste's own kexec'd kernel does
+not find it).
+
+The card is powered off right after, so sleep buys nothing at shutdown.
+Deselect it instead (as a card that cannot sleep is), leaving it in a
+state both ubiboot and a kexec'd kernel initialise normally. Suspend is
+unchanged. The cache is still flushed first, so no data is lost.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ drivers/mmc/core/mmc.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/core/mmc.c b/drivers/mmc/core/mmc.c
+index f9f083d18..d32cc3311 100644
+--- a/drivers/mmc/core/mmc.c
++++ b/drivers/mmc/core/mmc.c
+@@ -2160,7 +2160,15 @@ static int _mmc_suspend(struct mmc_host *host, enum mmc_poweroff_type pm_type)
+ 	if (mmc_card_can_poweroff_notify(host->card) &&
+ 	    mmc_host_can_poweroff_notify(host, pm_type))
+ 		err = mmc_poweroff_notify(host->card, notify_type);
+-	else if (mmc_card_can_sleep(host->card))
++	/*
++	 * At shutdown, deselect the card instead of putting it to sleep
++	 * (CMD5). On the Nokia N950 the Hynix eMMC keeps the sleep state over
++	 * the reboot (VEMMC, its VCC, is switched off while VCCQ stays on), and
++	 * ubiboot's old MMC driver then does not wake it and reports no eMMC.
++	 * The card is powered off next anyway, so sleep buys nothing here.
++	 */
++	else if (pm_type != MMC_POWEROFF_SHUTDOWN &&
++		 mmc_card_can_sleep(host->card))
+ 		err = mmc_sleep(host);
+ 	else if (!mmc_host_is_spi(host))
+ 		err = mmc_deselect_cards(host);
+-- 
+2.56.0
+
