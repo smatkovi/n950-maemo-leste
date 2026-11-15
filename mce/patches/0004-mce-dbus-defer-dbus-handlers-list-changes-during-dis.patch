@@ -1,0 +1,152 @@
+From b48b461f692b72f967cf17fffbb3eea2874247d3 Mon Sep 17 00:00:00 2001
+From: Ivaylo Dimitrov <ivo.g.dimitrov.75@gmail.com>
+Date: Tue, 4 Aug 2026 19:51:10 +0300
+Subject: [PATCH] mce-dbus: defer dbus handlers list changes during dispatch
+
+D-Bus handlers are allowed to add or remove handlers from their
+callbacks. Modifying the handler list while iterating over it can
+invalidate the GSList iterator and cause crashes or missed callbacks.
+
+Defer additions until the current dispatch completes and mark removed
+handlers for cleanup after iteration. Removed handlers are kept alive
+until dispatch finishes to preserve object lifetime while callbacks are
+running.
+
+Keep the existing handler ordering semantics by using prepend ordering
+for deferred additions as well.
+
+Add an assertion to catch unexpected reentrant message dispatch.
+
+Signed-off-by: Ivaylo Dimitrov <ivo.g.dimitrov.75@gmail.com>
+---
+ src/utils/mce-dbus.c | 58 ++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 51 insertions(+), 7 deletions(-)
+
+diff --git a/src/utils/mce-dbus.c b/src/utils/mce-dbus.c
+index e0c854d..5dba4fb 100644
+--- a/src/utils/mce-dbus.c
++++ b/src/utils/mce-dbus.c
+@@ -30,10 +30,16 @@
+ #include "mce.h"
+ #include "mce-dbus.h"
+ #include "mce-log.h"
++#include <assert.h>
+ 
+ /** List of all D-Bus handlers */
+ static GSList *dbus_handlers = NULL;
+ 
++/** List of all D-Bus handlers we shall add after current dispatch*/
++static GSList *dbus_handlers_add = NULL;
++
++static gboolean dispatching = FALSE;
++
+ /** D-Bus handler structure */
+ typedef struct {
+ 	gboolean (*callback)(DBusMessage *const msg);	/**< Handler callback */
+@@ -41,6 +47,7 @@ typedef struct {
+ 	gchar *rules;			/**< Additional matching rules */
+ 	gchar *name;			/**< Method call or signal name */
+ 	guint type;			/**< DBUS_MESSAGE_TYPE */
++	gboolean removed;
+ } handler_struct;
+ 
+ /** Pointer to the DBusConnection */
+@@ -403,6 +410,14 @@ EXIT:
+ 	return status;
+ }
+ 
++static void free_handler(handler_struct *h)
++{
++	g_free(h->interface);
++	g_free(h->rules);
++	g_free(h->name);
++	g_free(h);
++}
++
+ /**
+  * D-Bus message handler
+  *
+@@ -422,9 +437,15 @@ static DBusHandlerResult msg_handler(DBusConnection *const connection,
+ 	(void)connection;
+ 	(void)user_data;
+ 
++	assert(!dispatching);
++	dispatching = TRUE;
++
+ 	for (list = dbus_handlers; list != NULL; list = g_slist_next(list)) {
+ 		handler_struct *handler = list->data;
+ 
++		if (handler->removed == TRUE)
++			continue;
++
+ 		switch (handler->type) {
+ 		case DBUS_MESSAGE_TYPE_METHOD_CALL:
+ 			if (dbus_message_is_method_call(msg,
+@@ -466,6 +487,25 @@ static DBusHandlerResult msg_handler(DBusConnection *const connection,
+ 	}
+ 
+ EXIT:
++	list = dbus_handlers;
++
++	while (list != NULL) {
++		GSList *next = list->next;
++		handler_struct *handler = list->data;
++
++		if (handler->removed) {
++			dbus_handlers = g_slist_delete_link(dbus_handlers, list);
++			free_handler(handler);
++		}
++
++		list = next;
++	}
++
++	dbus_handlers = g_slist_concat(dbus_handlers_add, dbus_handlers);
++	dbus_handlers_add = NULL;
++
++	dispatching = FALSE;
++
+ 	return status;
+ }
+ 
+@@ -531,6 +571,7 @@ gconstpointer mce_dbus_handler_add(const gchar *const interface,
+ 		goto EXIT;
+ 	}
+ 
++	h->removed = FALSE;
+ 	h->interface = NULL;
+ 
+ 	if (interface && (h->interface = g_strdup(interface)) == NULL) {
+@@ -575,7 +616,10 @@ gconstpointer mce_dbus_handler_add(const gchar *const interface,
+ 		goto EXIT;
+ 	}
+ 
+-	dbus_handlers = g_slist_prepend(dbus_handlers, h);
++	if (!dispatching)
++		dbus_handlers = g_slist_prepend(dbus_handlers, h);
++	else
++		dbus_handlers_add = g_slist_prepend(dbus_handlers_add, h);
+ 
+ EXIT:
+ 	g_free(match);
+@@ -637,12 +681,12 @@ void mce_dbus_handler_remove(gconstpointer cookie)
+ 		mce_log(LL_CRIT, "Failed to allocate memory for match");
+ 	}
+ 
+-	dbus_handlers = g_slist_remove(dbus_handlers, h);
+-
+-	g_free(h->interface);
+-	g_free(h->rules);
+-	g_free(h->name);
+-	g_free(h);
++	if (!dispatching) {
++		dbus_handlers = g_slist_remove(dbus_handlers, h);
++		free_handler(h);
++	} else {
++		h->removed = TRUE;
++	}
+ 
+ 	g_free(match);
+ }
+-- 
+2.56.0
+
