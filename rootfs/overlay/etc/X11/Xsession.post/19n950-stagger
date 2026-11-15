@@ -1,0 +1,7 @@
+# Keep the background indexers and the update check at low priority for the
+# first minutes of the session, so the desktop comes up responsive
+# (/usr/local/sbin/n950-stagger). Sourced by Xsession-post before the
+# launchers; it backgrounds itself and returns at once.
+if [ -x /usr/local/sbin/n950-stagger ]; then
+	setsid /usr/local/sbin/n950-stagger </dev/null >/dev/null 2>&1 &
+fi

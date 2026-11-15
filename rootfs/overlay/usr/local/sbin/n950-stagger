@@ -1,0 +1,24 @@
+#!/bin/sh
+# The file and media indexers and the application-manager update check start
+# with the desktop and make the first minutes of a session sluggish, though
+# nothing waits for their results. Keep them at low CPU and idle I/O priority
+# so the desktop and the apps the owner opens stay responsive. They are pure
+# background work, so they are left low; the contacts and calendar factories
+# (evolution-*) are not touched, as the owner opens those apps.
+#
+# Matched by exact process name, so the UI, telephony and media playback keep
+# their priority. Run for a while to catch late starters, then exit.
+LIST="localsearch-3 localsearch-ex tracker-extract tracker-miner-f mafw-dbus-wrapp apt-worker ham-after-boot"
+SETTLE=${1:-240}
+STEP=5
+t=0
+while [ "$t" -le "$SETTLE" ]; do
+	for name in $LIST; do
+		for pid in $(pgrep -x "$name" 2>/dev/null); do
+			renice 15 -p "$pid" >/dev/null 2>&1
+			ionice -c 3 -p "$pid" >/dev/null 2>&1
+		done
+	done
+	[ "$t" -lt "$SETTLE" ] && sleep "$STEP"
+	t=$((t + STEP))
+done
