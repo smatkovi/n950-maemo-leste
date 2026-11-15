@@ -125,8 +125,7 @@ log "fstab, host name, root access"
 sudo -n tee "$DST/etc/fstab" > /dev/null <<EOF
 # N950: Leste on partition 4; ubiboot reads /boot/zImage from here.
 UUID=$FS_UUID	/	ext4	defaults,noatime,errors=remount-ro	0	1
-/dev/zram1 /tmp     ext4 defaults,strictatime 0 0
-/dev/zram2 /var/tmp ext4 defaults,relatime    0 0
+tmpfs /tmp tmpfs nosuid,nodev,mode=1777,size=64M 0 0
 none /sys/kernel/debug debugfs defaults 0 0
 # MyDocs, shared with Harmattan (FAT32, partition 1)
 /dev/mmcblk1p1	/home/user/MyDocs	vfat	nofail,noatime,utf8,uid=1000,gid=1000,shortname=mixed,dmask=022,fmask=133	0	0
@@ -225,6 +224,15 @@ in_target "rc-update add n950-firmware boot && rc-update add n950-usbnet default
 # Linux (rtc-offset, /etc/boot.d). Europe/Vienna is the owner's zone.
 in_target "mv /etc/X11/Xsession.post/01maemo-xinput-sounds-start /etc/X11/Xsession.post/01maemo-xinput-sounds-start.disabled 2>/dev/null; rc-update del exim4 default 2>/dev/null; true"
 in_target "ln -sf /usr/share/zoneinfo/Europe/Vienna /etc/localtime && echo Europe/Vienna > /etc/timezone"
+# Boot time (2026-11-15): services and session helpers with no use on the
+# phone. DUN over Bluetooth (no bluez), haveged (the kernel's RNG needs no
+# help), rsync's daemon, console font and keymap with five more text logins
+# (the screen belongs to X), gvfs monitors for cameras, MTP, iPhones and
+# online accounts, the desktop portal and the accessibility bus (activated
+# by every Qt/GTK3 program; 91n950-no-a11y sets QT_ACCESSIBILITY=0)
+in_target "for s in dundee:default haveged:default rsync:default console-setup.sh:default keyboard-setup.sh:sysinit; do rc-update del \${s%%:*} \${s##*:}; done 2>/dev/null; true"
+in_target "sed -i -E 's/^([2-6]:23:respawn:\\/sbin\\/getty .*)\$/#n950 \\1/' /etc/inittab"
+in_target "for f in /usr/share/gvfs/remote-volume-monitors/afc.monitor /usr/share/gvfs/remote-volume-monitors/goa.monitor /usr/share/gvfs/remote-volume-monitors/gphoto2.monitor /usr/share/gvfs/remote-volume-monitors/mtp.monitor /usr/share/dbus-1/services/org.freedesktop.portal.Desktop.service /usr/share/dbus-1/services/org.freedesktop.portal.Documents.service /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk.service /usr/share/dbus-1/services/org.freedesktop.impl.portal.PermissionStore.service /usr/share/dbus-1/services/org.a11y.Bus.service; do [ -e \$f ] && dpkg-divert --quiet --local --rename --divert \$f.n950-off --add \$f; done; true"
 in_target "depmod $KREL"
 in_target "rm /usr/bin/udevadm && dpkg-divert --quiet --local --rename --remove /usr/bin/udevadm &&
 	rm -f /usr/sbin/policy-rc.d"

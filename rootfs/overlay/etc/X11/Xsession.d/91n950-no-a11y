@@ -1,0 +1,8 @@
+# N950: no accessibility bus (at-spi is not installed for any use here, and
+# Qt and GTK would start it in every session); overrides 90qt-a11y
+QT_ACCESSIBILITY=0
+NO_AT_BRIDGE=1
+export QT_ACCESSIBILITY NO_AT_BRIDGE
+if [ -x /usr/bin/dbus-update-activation-environment ]; then
+	dbus-update-activation-environment QT_ACCESSIBILITY NO_AT_BRIDGE
+fi

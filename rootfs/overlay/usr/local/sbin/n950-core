@@ -1,0 +1,13 @@
+#!/bin/sh
+# kernel.core_pattern pipe (sysctl.d/61-n950-core.conf): keeps the cores of
+# the programs named in WANT in /var/cache/n950-cores, at most 3, 48 MiB each
+WANT="mce"
+pid=$1 exe=$2
+case " $WANT " in *" $exe "*) ;; *) cat > /dev/null; exit 0 ;; esac
+d=/var/cache/n950-cores
+mkdir -p $d
+[ "$(ls $d | grep -c '\.core$')" -lt 3 ] || { cat > /dev/null; exit 0; }
+f=$d/$exe.$pid.$(date +%Y%m%d-%H%M%S)
+cp /proc/$pid/maps $f.maps 2>/dev/null
+head -c 50331648 > $f.core
+cat > /dev/null

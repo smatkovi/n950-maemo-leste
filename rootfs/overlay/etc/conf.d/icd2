@@ -1,0 +1,3 @@
+# N950: start before the desktop (icd2 does not depend on it; OpenRC only
+# ordered it after hildon-desktop by name), so WLAN is up a minute earlier
+rc_before="hildon-desktop"
