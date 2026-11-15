@@ -231,6 +231,9 @@ in_target "ln -sf /usr/share/zoneinfo/Europe/Vienna /etc/localtime && echo Europ
 # online accounts, the desktop portal and the accessibility bus (activated
 # by every Qt/GTK3 program; 91n950-no-a11y sets QT_ACCESSIBILITY=0)
 in_target "for s in dundee:default haveged:default rsync:default console-setup.sh:default keyboard-setup.sh:sysinit; do rc-update del \${s%%:*} \${s##*:}; done 2>/dev/null; true"
+# also disable their sysv links, so installing the patched openrc .deb on a
+# running system cannot re-seed /etc/runlevels/default from /etc/rc2.d
+in_target "for s in dundee haveged rsync console-setup.sh exim4; do update-rc.d \$s disable; done 2>/dev/null; true"
 in_target "sed -i -E 's/^([2-6]:23:respawn:\\/sbin\\/getty .*)\$/#n950 \\1/' /etc/inittab"
 in_target "for f in /usr/share/gvfs/remote-volume-monitors/afc.monitor /usr/share/gvfs/remote-volume-monitors/goa.monitor /usr/share/gvfs/remote-volume-monitors/gphoto2.monitor /usr/share/gvfs/remote-volume-monitors/mtp.monitor /usr/share/dbus-1/services/org.freedesktop.portal.Desktop.service /usr/share/dbus-1/services/org.freedesktop.portal.Documents.service /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk.service /usr/share/dbus-1/services/org.freedesktop.impl.portal.PermissionStore.service /usr/share/dbus-1/services/org.a11y.Bus.service; do [ -e \$f ] && dpkg-divert --quiet --local --rename --divert \$f.n950-off --add \$f; done; true"
 in_target "depmod $KREL"

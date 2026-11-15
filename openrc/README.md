@@ -12,3 +12,16 @@ The dependency cache survives a reboot because `savecache` (run at shutdown)
 copies `/run/openrc/deptree` to `/lib/rc/cache`, where `init.sh` restores it.
 If a script in `/etc/init.d` or a file in `/etc/conf.d` is edited, OpenRC sees
 it is newer than the cache and rebuilds once, as before.
+
+
+## Note when installing on a running system
+
+Installing this `openrc` .deb on an already-running Leste re-seeds
+`/etc/runlevels/default` from the sysv `/etc/rc2.d` links, so services that
+were taken out with `rc-update del` (dundee, haveged, rsync, console-setup,
+exim4 on the N950) come back on the next boot. Disable them at the sysv
+level as well so the re-seed cannot re-add them:
+
+    for s in dundee haveged rsync console-setup.sh exim4; do update-rc.d $s disable; done
+
+A fresh image from `rootfs/build.sh` already does this.
