@@ -1,8 +1,11 @@
 # mce
 
-Patches on Leste's mce ([maemo-leste/mce](https://github.com/maemo-leste/mce)),
-applied with `patch -p1` in its source tree and built as Leste's own package
-(`dpkg-buildpackage -b` in a Leste armhf environment).
+Patches on Leste's mce ([maemo-leste/mce](https://github.com/maemo-leste/mce)).
+`build-deb.sh` applies 0001-0003 to Leste's 1.10.19 (d326052, shipped as
+1.10.19+5m7) and builds mce 1.10.19+5m7n950.1 in a Leste armhf root
+(`SYSROOT=<root> bash mce/build-deb.sh OUTDIR`); the release of that name has
+the packages, and both images install it (`rootfs/release-debs`). 0004 is
+upstream since 1.10.19.
 
 | Patch | What |
 | --- | --- |
