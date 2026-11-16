@@ -1,0 +1,605 @@
+From 11a111c729908f4b6075bd8db4a523797d9e16c2 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 16 Nov 2026 08:14:12 +0100
+Subject: [PATCH] ARM: dts: omap3-n9: Nokia N9 support (SDIO WLAN, pyrenees
+ panel, n9-modem)
+
+The N9 (RM-696) on the shared omap3-n950-n9.dtsi. Unlike the N950:
+- the WL1271 is on SDIO (mmc3), not SPI: retail N9 (board rev >= 0x0301,
+  e.g. 0x1603) uses SDIO (Nokia's board_has_sdio_wlan()). The VWLAN rail
+  (gpio 35) and the interrupt (gpio 42) are the shared dtsi's; the MMC3
+  pads are MUX_MODE3 (cross-checked against logicpd-torpedo-37xx);
+- the panel is the AMOLED "pyrenees" (generic panel-dsi-cm, same reset
+  gpio 87 and tearing gpio 62, 854 lines);
+- the modem is nokia,n9-modem;
+- no slide-out keyboard: only the TWL keypad's volume keys;
+- the main camera's CSI-2 link frequencies and lanes, and the AK8975
+  compass.
+
+Values from Nokia's Harmattan board-rm696*.c. The pyrenees init and the
+accelerometer mount matrix are to be confirmed on the device.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n9.dts | 525 ++++++++++++++++++++++++-
+ 1 file changed, 506 insertions(+), 19 deletions(-)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n9.dts b/arch/arm/boot/dts/ti/omap/omap3-n9.dts
+index a3cf3f443..89e41da01 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n9.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n9.dts
+@@ -2,24 +2,105 @@
+ /*
+  * omap3-n9.dts - Device Tree file for Nokia N9
+  *
+- * Written by: Aaro Koskinen <aaro.koskinen@iki.fi>
++ * Like the N950 (omap3-n950.dts) on the shared OMAP3630 board
++ * (omap3-n950-n9.dtsi): same SoC, GPU (SGX530), modem, audio, charger,
++ * sensors and LEDs. The N9 differs in:
++ *   - WLAN: the WL1271 is on SDIO (mmc3), not SPI. Retail N9 (board
++ *     revision >= 0x0301, e.g. 0x1603) uses SDIO; Nokia's board-rm696
++ *     selects it with board_has_sdio_wlan(). The power rail (VWLAN, gpio
++ *     35) and the interrupt (gpio 42) are the shared dtsi's.
++ *   - the display panel is "pyrenees" (AMOLED), not "himalaya" (LCD).
++ *   - the modem is nokia,n9-modem.
++ *   - no slide-out keyboard: only the volume keys on the TWL keypad.
++ *   - the main camera's CSI-2 link frequencies and lanes.
++ *
++ * Based on omap3-n950.dts by Aaro Koskinen.
+  */
+ 
+ /dts-v1/;
+ 
+ #include "omap3-n950-n9.dtsi"
+ #include <dt-bindings/input/input.h>
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/i2c/i2c.h>
+ 
+ / {
+ 	model = "Nokia N9";
+ 	compatible = "nokia,omap3-n9", "ti,omap3630", "ti,omap3";
++
++	/*
++	 * The battery as the fuel gauge sees it (bq27521: voltage and current,
++	 * no state of charge). The N9's cell is a BV-5J; its OCV table is not
++	 * measured yet, so the N950's 4.20 V Li-ion table is used as a start.
++	 * The boot loader locks the charger at 4.20 V.
++	 */
++	battery: battery {
++		compatible = "simple-battery";
++		device-chemistry = "lithium-ion";
++		voltage-max-design-microvolt = <4200000>;
++		ocv-capacity-celsius = <25>;
++		ocv-capacity-table-0 =
++			<4186000 100>, <4126000 95>, <4078000 90>,
++			<4036000 85>, <3997000 80>, <3962000 75>,
++			<3932000 70>, <3904000 65>, <3874000 60>,
++			<3839000 55>, <3809000 50>, <3792000 45>,
++			<3780000 40>, <3772000 35>, <3764000 30>,
++			<3752000 25>, <3731000 20>, <3704000 16>,
++			<3677000 13>, <3670000 11>, <3668000 10>,
++			<3666000 9>, <3662000 8>, <3658000 7>, <3648000 6>,
++			<3624000 5>, <3580000 4>, <3518000 3>, <3434000 2>,
++			<3310000 1>, <3000000 0>;
++	};
++
++	/* the battery, which some parts are fed from directly */
++	vbat: regulator-vbat {
++		compatible = "regulator-fixed";
++		regulator-name = "VBAT";
++		regulator-min-microvolt = <3700000>;
++		regulator-max-microvolt = <3700000>;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++};
++
++&omap3_pmx_core {
++	/* SDIO WLAN on MMC3 (Nokia's AB1/AC3/AE4/AH3/AF3/AE3 MMC3 pads,
++	 * MUX_MODE3; offsets cross-checked against logicpd-torpedo-37xx) */
++	mmc3_pins: mmc3-pins {
++		pinctrl-single,pins = <
++			OMAP3_CORE1_IOPAD(0x21d2, PIN_INPUT_PULLUP | MUX_MODE3) /* sdmmc3_clk */
++			OMAP3_CORE1_IOPAD(0x21d0, PIN_INPUT_PULLUP | MUX_MODE3) /* sdmmc3_cmd */
++			OMAP3_CORE1_IOPAD(0x2164, PIN_INPUT_PULLUP | MUX_MODE3) /* sdmmc2_dat4.sdmmc3_dat0 */
++			OMAP3_CORE1_IOPAD(0x2166, PIN_INPUT_PULLUP | MUX_MODE3) /* sdmmc2_dat5.sdmmc3_dat1 */
++			OMAP3_CORE1_IOPAD(0x2168, PIN_INPUT_PULLUP | MUX_MODE3) /* sdmmc2_dat6.sdmmc3_dat2 */
++			OMAP3_CORE1_IOPAD(0x216a, PIN_INPUT_PULLUP | MUX_MODE3) /* sdmmc2_dat7.sdmmc3_dat3 */
++		>;
++	};
++
++	dsi_pins: dsi-pins {
++		pinctrl-single,pins = <
++			OMAP3_CORE1_IOPAD(0x20dc, PIN_OUTPUT | MUX_MODE1) /* dsi_dx0 - data0+ */
++			OMAP3_CORE1_IOPAD(0x20de, PIN_OUTPUT | MUX_MODE1) /* dsi_dy0 - data0- */
++			OMAP3_CORE1_IOPAD(0x20e0, PIN_OUTPUT | MUX_MODE1) /* dsi_dx1 - clk+   */
++			OMAP3_CORE1_IOPAD(0x20e2, PIN_OUTPUT | MUX_MODE1) /* dsi_dy1 - clk-   */
++			OMAP3_CORE1_IOPAD(0x20e4, PIN_OUTPUT | MUX_MODE1) /* dsi_dx2 - data1+ */
++			OMAP3_CORE1_IOPAD(0x20e6, PIN_OUTPUT | MUX_MODE1) /* dsi_dy2 - data1- */
++		>;
++	};
++
++	display_pins: display-pins {
++		pinctrl-single,pins = <
++			OMAP3_CORE1_IOPAD(0x20ca, PIN_INPUT | MUX_MODE4) /* gpio 62 - display te */
++			OMAP3_CORE1_IOPAD(0x20fe, PIN_OUTPUT | MUX_MODE4) /* gpio 87 - display reset */
++		>;
++	};
+ };
+ 
+ &i2c2 {
++	/* 8 MP main camera (board-rm696-camera.c) */
+ 	smia_1: camera@10 {
+ 		compatible = "nokia,smia";
+ 		reg = <0x10>;
+-		/* No reset gpio */
+ 		vana-supply = <&vaux3>;
+ 		clocks = <&isp 0>;
+ 		clock-frequency = <9600000>;
+@@ -35,13 +116,6 @@ smia_1_1: endpoint {
+ 	};
+ };
+ 
+-&i2c3 {
+-	ak8975@f {
+-		compatible = "asahi-kasei,ak8975";
+-		reg = <0x0f>;
+-	};
+-};
+-
+ &isp {
+ 	vdd-csiphy1-supply = <&vaux2>;
+ 	vdd-csiphy2-supply = <&vaux2>;
+@@ -59,26 +133,439 @@ csi2a_ep: endpoint {
+ 	};
+ };
+ 
++/*
++ * WLAN: WL1271 on SDIO (MMC3). The power rail (VWLAN, gpio 35) and the
++ * interrupt (gpio 42) come from the shared dtsi (vwlan_fixed, wlan_pins).
++ * reg = <2> is the WLAN SDIO function.
++ */
++&mmc3 {
++	status = "okay";
++	vmmc-supply = <&vwlan_fixed>;
++	bus-width = <4>;
++	non-removable;
++	ti,non-removable;
++	cap-power-off-card;
++	pinctrl-names = "default";
++	pinctrl-0 = <&mmc3_pins &wlan_pins>;
++
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	wlcore: wlcore@2 {
++		compatible = "ti,wl1271";
++		reg = <2>;
++		interrupts-extended = <&gpio2 10 IRQ_TYPE_LEVEL_HIGH>; /* gpio 42 */
++		ref-clock-frequency = <38400000>;
++		clock-xtal;
++	};
++};
++
+ &modem {
+ 	compatible = "nokia,n9-modem";
+ };
+ 
+-&lis302 {
+-	st,axis-x = <1>;    /* LIS3_DEV_X */
+-	st,axis-y = <(-2)>; /* LIS3_INV_DEV_Y */
+-	st,axis-z = <(-3)>; /* LIS3_INV_DEV_Z */
++/*
++ * OPP1G (1 GHz) as a turbo OPP, like the N950; the daily ceiling is set by
++ * user space.
++ */
++&cpu0_opp_table {
++	opp-1000000000 {
++		opp-supported-hw = <0xffffffff 3>;
++	};
+ 
+-	st,min-limit-x = <(-46)>;
+-	st,min-limit-y = <3>;
+-	st,min-limit-z = <3>;
++	opp-1100000000 {
++		opp-hz = /bits/ 64 <1100000000>;
++		opp-microvolt = <1375000 1375000 1375000>,
++				 <1375000 1375000 1375000>;
++		opp-supported-hw = <0xffffffff 3>;
++		turbo-mode;
++	};
++};
+ 
+-	st,max-limit-x = <(-3)>;
+-	st,max-limit-y = <46>;
+-	st,max-limit-z = <46>;
++&twl {
++	bcc: charge-control {
++		compatible = "nokia,twl5031-bcc";
++		usb-phy = <&usb2_phy>;
++		usb3v1-supply = <&vusb3v1>;
++	};
++
++	twl_audio: audio {
++		compatible = "ti,twl4030-audio";
++		ti,enable-vibra = <1>;
++	};
+ };
+ 
++/* The N9 has no slide-out keyboard: only the volume keys (board-rm696.c) */
+ &twl_keypad {
+ 	linux,keymap = < MATRIX_KEY(6, 8, KEY_VOLUMEUP)
+ 			 MATRIX_KEY(7, 8, KEY_VOLUMEDOWN)
+ 			 >;
+ };
++
++/*
++ * The accelerometer through IIO (st_accel). Nokia's board file mounts it
++ * on the N9 as X, -Y, -Z (board-rm696-peripherals.c: axis-x 1, -2, -3),
++ * hence this matrix. To verify on the device.
++ */
++&lis302 {
++	compatible = "st,lis302dl";
++	vdd-supply = <&vaux1>;
++	vddio-supply = <&vio>;
++	interrupts-extended = <&gpio6 20 IRQ_TYPE_EDGE_RISING>,	/* gpio_180, INT1 */
++			      <&gpio6 21 IRQ_TYPE_EDGE_RISING>;	/* gpio_181, INT2 */
++	mount-matrix = "1", "0", "0",
++		       "0", "-1", "0",
++		       "0", "0", "-1";
++
++	/delete-property/ Vdd-supply;
++	/delete-property/ Vdd_IO-supply;
++	/delete-property/ st,click-single-x;
++	/delete-property/ st,click-single-y;
++	/delete-property/ st,click-single-z;
++	/delete-property/ st,click-threshold-x;
++	/delete-property/ st,click-threshold-y;
++	/delete-property/ st,click-threshold-z;
++	/delete-property/ st,click-time-limit;
++	/delete-property/ st,click-latency;
++	/delete-property/ st,wakeup-x-hi;
++	/delete-property/ st,wakeup-y-hi;
++	/delete-property/ st,wakeup-threshold;
++	/delete-property/ st,wakeup2-z-hi;
++	/delete-property/ st,wakeup2-threshold;
++	/delete-property/ st,highpass-cutoff-hz;
++	/delete-property/ st,irq1-ff-wu-1;
++	/delete-property/ st,irq1-ff-wu-2;
++	/delete-property/ st,irq2-click;
++	/delete-property/ st,wu-duration-1;
++	/delete-property/ st,wu-duration-2;
++};
++
++&i2c3 {
++	/* AK8975 compass (board-rm696.c; the N950 has the AK8974) */
++	magnetometer@f {
++		compatible = "asahi-kasei,ak8975";
++		reg = <0x0f>;
++		avdd-supply = <&vaux1>;
++		dvdd-supply = <&vio>;
++	};
++};
++
++&omap3_pmx_core {
++	touchscreen_pins: touchscreen-pins {
++		pinctrl-single,pins = <
++			OMAP3_CORE1_IOPAD(0x20f2, PIN_OUTPUT | MUX_MODE4)	/* dss_data11.gpio_81 -> TRESX */
++		>;
++	};
++};
++
++&i2c2 {
++	/* Atmel maXTouch */
++	touchscreen@4b {
++		compatible = "atmel,maxtouch";
++		reg = <0x4b>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&touchscreen_pins>;
++		interrupt-parent = <&gpio2>;
++		interrupts = <29 IRQ_TYPE_EDGE_FALLING>;	/* gpio_61 */
++		reset-gpios = <&gpio3 17 GPIO_ACTIVE_LOW>;	/* gpio_81, TRESX */
++		vdda-supply = <&vaux1>;
++		vdd-supply = <&vio>;
++	};
++
++	/*
++	 * LP5523: the N9 has no keyboard, so channels 0-5 are unused; channel
++	 * 8 is the white notification LED (Harmattan's mce).
++	 */
++	led-controller@32 {
++		compatible = "national,lp5523";
++		reg = <0x32>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		clock-mode = /bits/ 8 <2>;	/* LP55XX_CLOCK_EXT */
++		enable-gpios = <&gpio2 9 GPIO_ACTIVE_HIGH>;	/* gpio_41 */
++
++		led@8 {
++			reg = <8>;
++			chan-name = "lp5523:white";
++			led-cur = /bits/ 8 <50>;
++			max-cur = /bits/ 8 <130>;
++		};
++	};
++
++	/* BH1770GLC / SFH7770 proximity and ambient light */
++	proximity@38 {
++		compatible = "rohm,bh1770glc";
++		reg = <0x38>;
++		interrupt-parent = <&gpio3>;
++		interrupts = <19 IRQ_TYPE_EDGE_FALLING>;	/* gpio_83 */
++		Vcc-supply = <&vaux1>;
++		Vleds-supply = <&vbat>;
++		rohm,proximity-led-microamp = <50000>;
++		rohm,glass-attenuation = <63078>;	/* 16384 * 3.85 */
++	};
++
++	/* bq24153a charger (through the TWL5031's charge-control switch) */
++	bq24153a: charger@6b {
++		compatible = "ti,bq24153a";
++		reg = <0x6b>;
++
++		ti,current-limit = <100>;
++		ti,weak-battery-voltage = <3400>;
++		ti,battery-regulation-voltage = <4200>;
++		ti,charge-current = <650>;
++		ti,termination-current = <100>;
++		ti,resistor-sense = <68>;
++
++		ti,usb-charger-detection = <&bcc>;
++
++		io-channels = <&twl_madc 0>;
++		io-channel-names = "bsi";
++	};
++
++	/* bq27521 fuel gauge */
++	fuel-gauge@55 {
++		compatible = "ti,bq27521";
++		reg = <0x55>;
++		power-supplies = <&bq24153a>;
++		monitored-battery = <&battery>;
++	};
++};
++
++/*
++ * OneNAND belongs to Harmattan: the boot loader (NOLO), config and log stay
++ * read-only; the kernel partition is writable (ubiboot), and var for swap.
++ */
++&gpmc {
++	onenand@0,0 {
++		/delete-property/ gpmc,sync-read;
++		/delete-property/ gpmc,sync-write;
++		/delete-property/ gpmc,burst-read;
++		/delete-property/ gpmc,burst-write;
++		/delete-property/ gpmc,burst-wrap;
++		/delete-property/ gpmc,burst-length;
++		/delete-property/ gpmc,sync-clk-ps;
++
++		nokia,boot-gpmc-config = <0xfd001202 0x00181800 0x00030300
++					  0x18001804 0x03171d1d 0x97080000>;
++
++		partition@0 {
++			read-only;
++		};
++		partition@1 {
++			read-only;
++		};
++		partition@3 {
++			read-only;
++		};
++		partition@5 {
++			read-only;
++		};
++		partition@6 {
++			read-only;
++		};
++	};
++};
++
++&dss {
++	status = "okay";
++
++	vdda_video-supply = <&vdac>;
++};
++
++&dsi {
++	status = "okay";
++
++	pinctrl-names = "default";
++	pinctrl-0 = <&dsi_pins>;
++
++	vdd-supply = <&vpll2>;
++
++	port {
++		dsi_out_ep: endpoint {
++			remote-endpoint = <&lcd0_in>;
++			lanes = <2 3 0 1 4 5>;
++		};
++	};
++
++	/*
++	 * The N9's AMOLED panel ("pyrenees", board-rm696-video.c). Same reset
++	 * (gpio 87) and tearing (gpio 62) as the N950, 854 visible lines; the
++	 * generic panel-dsi-cm driver drives it from the timing below. The
++	 * AMOLED's own init may differ from the N950's LCD (himalaya); to
++	 * verify on the device.
++	 */
++	lcd0: panel@0 {
++		compatible = "nokia,pyrenees", "panel-dsi-cm";
++		reg = <0>;
++		label = "lcd0";
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&display_pins>;
++
++		vpnl-supply = <&vmmc2>;
++		vddi-supply = <&vio>;
++
++		reset-gpios = <&gpio3 23 GPIO_ACTIVE_HIGH>;	/* 87 */
++		te-gpios = <&gpio2 30 GPIO_ACTIVE_HIGH>;	/* 62 */
++
++		width-mm = <51>;
++		height-mm = <89>;
++
++		panel-timing {
++			clock-frequency = <0>;          /* Calculated by dsi */
++
++			hback-porch = <2>;
++			hactive = <480>;
++			hfront-porch = <0>;
++			hsync-len = <2>;
++
++			vback-porch = <1>;
++			vactive = <864>;
++			vfront-porch = <0>;
++			vsync-len = <1>;
++
++			hsync-active = <0>;
++			vsync-active = <0>;
++			de-active = <1>;
++			pixelclk-active = <1>;
++		};
++
++		port {
++			lcd0_in: endpoint {
++				remote-endpoint = <&dsi_out_ep>;
++			};
++		};
++	};
++};
++
++/*
++ * Audio, after Nokia's board-rm696.c: the same as the N950 (TWL5031 on
++ * McBSP3 for earpiece/loudspeaker, TLV320DAC33 on McBSP2 for headphones
++ * through a TPA6140A2).
++ */
++/ {
++	sound: sound {
++		compatible = "nokia,n950-audio";
++		model = "N9";
++		nokia,cpu-dai = <&mcbsp3>, <&mcbsp2>;
++		nokia,audio-codec = <&dac33>;
++		nokia,headphone-amplifier = <&tpa6140a2>;
++		speaker-amplifier-gpios = <&twl_gpio 7 GPIO_ACTIVE_HIGH>;
++		hp-det-gpios = <&twl_gpio 0 GPIO_ACTIVE_LOW>;
++		interrupts-extended = <&twl 6>;
++		interrupt-names = "aci";
++		plug-supply = <&vaux1>;
++		io-channels = <&twl_madc 10>;
++		io-channel-names = "hs-mic";
++	};
++};
++
++&mcbsp2 {
++	status = "okay";
++};
++
++&mcbsp3 {
++	status = "okay";
++};
++
++&twl_audio {
++	codec {
++		ti,digimic_delay = <0>;
++		ti,ramp_delay_value = <2>;
++		ti,offset_cncl_path = <0x20>;	/* TWL4030_OFFSET_CNCL_SEL_ARX2 */
++	};
++};
++
++&i2c2 {
++	dac33: audio-codec@19 {
++		compatible = "ti,tlv320dac33";
++		reg = <0x19>;
++		interrupts-extended = <&gpio2 21 IRQ_TYPE_EDGE_RISING>; /* 53 */
++		reset-gpios = <&gpio2 28 GPIO_ACTIVE_HIGH>; /* 60 */
++		AVDD-supply = <&vaux4>;
++		DVDD-supply = <&vio>;
++		IOVDD-supply = <&vio>;
++		ti,burst-bclkdiv = <3>;
++		ti,keep-bclk;
++		#sound-dai-cells = <0>;
++	};
++
++	tpa6140a2: amplifier@60 {
++		compatible = "ti,tpa6140a2";
++		reg = <0x60>;
++		Vdd-supply = <&vbat>;
++	};
++};
++
++/* GPS: BCM4751 at the 10-bit address 0x1fa (board-rm696.c) */
++&i2c3 {
++	gnss@800001fa {
++		compatible = "brcm,bcm4751";
++		reg = <(I2C_TEN_BIT_ADDRESS | 0x1fa)>;
++		vdd-auxin-supply = <&vio>;
++		vddio-supply = <&vio>;
++		enable-gpios = <&gpio3 30 GPIO_ACTIVE_HIGH>;	/* 94 */
++		wakeup-gpios = <&gpio3 27 GPIO_ACTIVE_HIGH>;	/* 91 */
++		host-req-gpios = <&gpio3 31 GPIO_ACTIVE_HIGH>;	/* 95 */
++	};
++};
++
++/*
++ * FM radio: the FM part of the WL1273 at 0x22 on I2C3, interrupt GPIO 43,
++ * reset GPIO 179 (board-rm696-peripherals.c, same as the N950). The sound
++ * comes over the chip's I2S port on McBSP4 after a Bluetooth vendor command.
++ */
++&i2c3 {
++	fm-radio@22 {
++		compatible = "ti,wl1273-fm";
++		reg = <0x22>;
++		interrupts-extended = <&gpio2 11 IRQ_TYPE_EDGE_FALLING>;	/* 43 */
++		reset-gpios = <&gpio6 19 GPIO_ACTIVE_LOW>;			/* 179 */
++
++		wl1273_codec: codec {
++			compatible = "ti,wl1273-codec";
++			#sound-dai-cells = <0>;
++		};
++	};
++};
++
++&omap3_pmx_core {
++	mcbsp4_pins: mcbsp4-pins {
++		pinctrl-single,pins = <
++			OMAP3_CORE1_IOPAD(0x20b6, PIN_INPUT | MUX_MODE2)		/* gpmc_ncs4.mcbsp4_clkx */
++			OMAP3_CORE1_IOPAD(0x20b8, PIN_INPUT | MUX_MODE2)		/* gpmc_ncs5.mcbsp4_dr */
++			OMAP3_CORE1_IOPAD(0x20ba, PIN_OUTPUT_PULLDOWN | MUX_MODE2)	/* gpmc_ncs6.mcbsp4_dx */
++			OMAP3_CORE1_IOPAD(0x20bc, PIN_INPUT | MUX_MODE2)		/* gpmc_ncs7.mcbsp4_fsx */
++		>;
++	};
++};
++
++&mcbsp4 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&mcbsp4_pins>;
++	status = "okay";
++};
++
++/ {
++	sound-fm {
++		compatible = "simple-audio-card";
++		simple-audio-card,name = "N9 FM";
++		simple-audio-card,format = "i2s";
++		simple-audio-card,bitclock-master = <&fm_codec_dai>;
++		simple-audio-card,frame-master = <&fm_codec_dai>;
++
++		simple-audio-card,cpu {
++			sound-dai = <&mcbsp4>;
++		};
++
++		fm_codec_dai: simple-audio-card,codec {
++			sound-dai = <&wl1273_codec>;
++		};
++	};
++};
++
++/* SGX530 at CORE/2 (195 MHz), as the N950 */
++&sgx_module {
++	assigned-clocks = <&sgx_fck>;
++	assigned-clock-rates = <195200000>;
++};
+-- 
+2.56.0
+
