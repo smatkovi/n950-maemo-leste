@@ -1,0 +1,14 @@
+# Packages from this repository's releases that both images install
+# (rootfs/build.sh, rootfs/n9/build.sh): <release tag>/<file>, one a line.
+sgx-ddk-um-n950-1.17.4948957-n950.2/sgx-ddk-um-n950_1.17.4948957-n950.2_armhf.deb
+mce-1.10.19+5m7n950.1/mce_1.10.19+5m7n950.1_armhf.deb
+ofono-2.18.0-1+5m7n950.6/ofono_2.18.0-1+5m7n950.6_armhf.deb
+n950-fm-0.2.1/n950-fm_0.2.1_armhf.deb
+libcmtspeechdata-0.1.2.6-1+n950.1/libcmtspeechdata_0.1.2.6-1+n950.1_armhf.deb
+libicd-network-wpasupplicant-0.1.20+5m7n950.2/libicd-network-wpasupplicant_0.1.20+5m7n950.2_armhf.deb
+openrc-0.56-1+n950.1/libeinfo1_0.56-1+n950.1_armhf.deb
+openrc-0.56-1+n950.1/librc1t64_0.56-1+n950.1_armhf.deb
+openrc-0.56-1+n950.1/openrc_0.56-1+n950.1_armhf.deb
+status-area-applet-battery-1.5.9-1+5m7n950.1/status-area-applet-battery_1.5.9-1+5m7n950.1_armhf.deb
+embedlite-n950-153.6.0-n950.6/embedlite-n950_153.6.0-n950.6_armhf.deb
+firefox-n950-153.6.0-n950.1/firefox-n950_153.6.0-n950.1_armhf.deb

@@ -38,14 +38,6 @@ FEATURES=has_journal,ext_attr,resize_inode,dir_index,filetype,extent,flex_bg,spa
 # (ubiboot leaves it running), as on the N950
 CMDLINE="root=/dev/mmcblk1p4 rootwait rw rootfstype=ext4 init=/sbin/init console=tty0 omap_wdt.early_enable=1 mitigations=off cgroup_disable=memory"
 GH=https://github.com/smatkovi/n950-maemo-leste/releases/download
-DEBS="embedlite-n950-153.6.0-n950.6/embedlite-n950_153.6.0-n950.6_armhf.deb
-	ofono-2.18.0-1%2B5m7n950.6/ofono_2.18.0-1+5m7n950.6_armhf.deb
-	n950-fm-0.2.1/n950-fm_0.2.1_armhf.deb
-	libcmtspeechdata-0.1.2.6-1%2Bn950.1/libcmtspeechdata_0.1.2.6-1+n950.1_armhf.deb
-	libicd-network-wpasupplicant-0.1.20%2B5m7n950.2/libicd-network-wpasupplicant_0.1.20+5m7n950.2_armhf.deb
-	openrc-0.56-1%2Bn950.1/libeinfo1_0.56-1+n950.1_armhf.deb
-	openrc-0.56-1%2Bn950.1/librc1t64_0.56-1+n950.1_armhf.deb
-	openrc-0.56-1%2Bn950.1/openrc_0.56-1+n950.1_armhf.deb"
 
 SRC=/mnt/n9-src
 DST=/mnt/n9-dst
@@ -160,12 +152,13 @@ log "packages released since the base image, Maliit"
 # maedevu may be unreachable: the base image's lists still name its packages
 in_target "apt-get -q update" || log "apt-get update failed in part, going on with the old lists"
 debs=
-for d in $DEBS; do
+while read -r d; do
+	case $d in ''|'#'*) continue ;; esac
 	f=${d##*/}
-	sudo -n curl -sfL -o "$DST/tmp/$f" "$GH/$d"
+	sudo -n curl -sfL -o "$DST/tmp/$f" "$GH/$(echo "${d%/*}" | sed 's/+/%2B/g')/$f"
 	debs="$debs /tmp/$f"
-done
-in_target "apt-get -q -y --no-install-recommends -o Dpkg::Options::=--force-confold install $debs maliit-framework maliit-keyboard"
+done < "$REPO/rootfs/release-debs"
+in_target "apt-get -q -y --no-install-recommends -o Dpkg::Options::=--force-confold install $debs maliit-framework maliit-keyboard wmctrl"
 # Nothing depends on these, and the N9 has no use for them: Vulkan (the
 # SGX530 has none) and an English speech-recognition model no program uses
 in_target "apt-get -q -y purge mesa-vulkan-drivers pocketsphinx-en-us"
@@ -179,6 +172,10 @@ in_target "glib-compile-schemas /usr/share/glib-2.0/schemas"
 log "N950 files (rootfs/overlay), the N9's Wi-Fi modules"
 sudo -n rsync -rlpt --chown=root:root "$REPO/rootfs/overlay/" "$DST/"
 sudo -n install -m 644 "$HERE/modules-load.d/n950-wifi.conf" "$DST/etc/modules-load.d/n950-wifi.conf"
+# personalisation (the default theme at first boot, theme changes) through
+# /usr/lib/n950/personalisation, which keeps it working with /tmp on tmpfs
+in_target "dpkg-divert --quiet --local --rename --divert /usr/bin/personalisation.real --add /usr/bin/personalisation &&
+	ln -sf /usr/lib/n950/personalisation /usr/bin/personalisation"
 sudo -n install -D -m 755 "$REPO/gps/positioningd-gpsd.py" "$DST/usr/lib/n950-gps/positioningd-gpsd.py"
 sudo -n install -D -m 755 "$REPO/gps/harmattan-gps" "$DST/usr/sbin/harmattan-gps"
 sudo -n install -D -m 755 "$REPO/gps/harmattan-gps.initd" "$DST/etc/init.d/harmattan-gps"

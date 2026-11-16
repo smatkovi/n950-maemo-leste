@@ -1,0 +1,14 @@
+#!/bin/sh
+# Leste's personalisation (installed in place of /usr/bin/personalisation,
+# the original diverted to personalisation.real) makes the theme link as
+# /tmp/themeXXXXXX and renames it to /etc/hildon/theme. With /tmp on tmpfs
+# (fstab) the rename crosses file systems and fails, so no theme was ever
+# set (pink status bar, black desktop) and changing it in the settings
+# failed too. As root it runs in a mount namespace of its own without the
+# tmpfs on /tmp, so its /tmp is the root file system's directory (a bind
+# mount would not do: rename() fails between mount points too).
+REAL=/usr/bin/personalisation.real
+if [ "$(id -u)" = 0 ] && command -v unshare > /dev/null; then
+	exec unshare -m --propagation private sh -c 'umount -l /tmp; exec "$0" "$@"' "$REAL" "$@"
+fi
+exec "$REAL" "$@"

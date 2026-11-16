@@ -7,7 +7,11 @@
 # N900's user space (1.2.1), which the kernel module refuses. TI's DDK
 # 1.17.4948957 build for the AM335x (ti335x) is for the same SGX530 1.2.5.
 # The package puts its GPU libraries and pvrsrvctl in place of
-# sgx-ddk-um-ti343x's (dpkg-divert, so removing it brings those back).
+# sgx-ddk-um-ti343x's (dpkg-divert, so removing it brings those back). The
+# diverted libraries go to a directory of their own, $LIBDIR/sgx-ti343x:
+# n950.1 left them next to the new ones as <name>.ti343x, and ldconfig took
+# that name for the newer version, so libsrv_init.so.1 and the other links
+# led back to the N900's libraries (the GPU refused them on the N9).
 # Leste's own libdbm, pvrsrvinit and the library links stay those of
 # sgx-ddk-um-ti343x: TI's libdbm accepts only the AM335x's display driver
 # (tilcdc), Leste's the N950's (omapdrm).
@@ -23,7 +27,7 @@ BRANCH=1.17.4948957/mesa/glibc-2.35
 COMMIT=84a396a4fb379f10931421e489ac8a199d6a9f2c
 REL=targetfs/ti335x_linux/lws-generic/release
 PKG=sgx-ddk-um-n950
-VERSION=1.17.4948957-n950.1
+VERSION=1.17.4948957-n950.2
 LIBDIR=usr/lib/arm-linux-gnueabihf
 log() { echo ">> $*"; }
 
@@ -103,24 +107,50 @@ Description: PowerVR SGX530 1.2.5 user space for the Nokia N950
 EOF
 
 list=${DIVERTED[*]}
+# where each file of sgx-ddk-um-ti343x is diverted to
+cat > "$W/control/divert-to" <<EOF
+divert_to() {
+	case \$1 in
+	/usr/bin/*) echo "\$1.ti343x" ;;
+	*) echo "/$LIBDIR/sgx-ti343x/\${1##*/}" ;;
+	esac
+}
+EOF
 cat > "$W/control/preinst" <<EOF
 #!/bin/sh
 set -e
+$(cat "$W/control/divert-to")
 if [ "\$1" = install ] || [ "\$1" = upgrade ]; then
+	mkdir -p /$LIBDIR/sgx-ti343x
 	for f in $list; do
-		dpkg-divert --quiet --package $PKG --add --rename --divert "\$f.ti343x" "\$f"
+		to=\$(divert_to "\$f")
+		cur=\$(dpkg-divert --truename "\$f")
+		if [ "\$cur" != "\$f" ] && [ "\$cur" != "\$to" ] &&
+		   [ "\$(dpkg-divert --listpackage "\$f")" = $PKG ]; then
+			# diverted by n950.1 next to itself: move the diversion, keep
+			# the file now in place (this package's)
+			dpkg-divert --quiet --package $PKG --remove --no-rename "\$f"
+			[ -e "\$cur" ] && mv "\$cur" "\$to"
+			dpkg-divert --quiet --package $PKG --add --no-rename --divert "\$to" "\$f"
+		else
+			dpkg-divert --quiet --package $PKG --add --rename --divert "\$to" "\$f"
+		fi
 	done
 fi
 EOF
 cat > "$W/control/postrm" <<EOF
 #!/bin/sh
 set -e
+$(cat "$W/control/divert-to")
 if [ "\$1" = remove ] || [ "\$1" = abort-install ] || [ "\$1" = disappear ]; then
 	for f in $list; do
-		dpkg-divert --quiet --package $PKG --remove --rename --divert "\$f.ti343x" "\$f"
+		dpkg-divert --quiet --package $PKG --remove --rename --divert "\$(divert_to "\$f")" "\$f"
 	done
+	rmdir /$LIBDIR/sgx-ti343x 2>/dev/null || true
+	ldconfig
 fi
 EOF
+rm "$W/control/divert-to"
 cat > "$W/control/postinst" <<'EOF'
 #!/bin/sh
 set -e

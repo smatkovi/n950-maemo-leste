@@ -187,23 +187,21 @@ for deb in osso-chess-ui/releases/download/v1.8.3-2%2Bleste1/osso-chess-ui_1.8.3
 	sudo -n curl -sfL -o "$DST/tmp/${deb##*/}" "$GH/$deb"
 	in_target "apt-get -q -y install /tmp/${deb##*/} && rm -f /tmp/${deb##*/}"
 done
-# The FM radio (apps/n950-fm): its release, or a local build
-FM_URL=$GH/n950-maemo-leste/releases/download/n950-fm-0.1.0/n950-fm_0.1.0_armhf.deb
-if [ -n "$FM_DEB" ]; then
-	sudo -n cp "$FM_DEB" "$DST/tmp/n950-fm.deb"
-else
-	sudo -n curl -sfL -o "$DST/tmp/n950-fm.deb" "$FM_URL"
-fi
-in_target "apt-get -q -y install /tmp/n950-fm.deb && rm -f /tmp/n950-fm.deb"
-# The GPU's user space for the N950's SGX530 1.2.5 (sgx/build-deb.sh):
-# its release, or a local build
-SGX_URL=$GH/n950-maemo-leste/releases/download/sgx-ddk-um-n950-1.17.4948957-n950.1/sgx-ddk-um-n950_1.17.4948957-n950.1_armhf.deb
-if [ -n "$SGX_DEB" ]; then
-	sudo -n cp "$SGX_DEB" "$DST/tmp/sgx-ddk-um-n950.deb"
-else
-	sudo -n curl -sfL -o "$DST/tmp/sgx-ddk-um-n950.deb" "$SGX_URL"
-fi
-in_target "apt-get -q -y install /tmp/sgx-ddk-um-n950.deb && rm -f /tmp/sgx-ddk-um-n950.deb"
+# This repository's released packages (rootfs/release-debs): the GPU's user
+# space, mce, ofono, FM, call audio, icd2's WLAN module, openrc, the battery
+# applet, the browsers. FM_DEB and SGX_DEB put local builds in their place.
+debs=
+while read -r d; do
+	case $d in ''|'#'*) continue ;; esac
+	f=${d##*/}
+	case $f in
+	n950-fm_*) [ -n "$FM_DEB" ] && { sudo -n cp "$FM_DEB" "$DST/tmp/$f"; debs="$debs /tmp/$f"; continue; } ;;
+	sgx-ddk-um-n950_*) [ -n "$SGX_DEB" ] && { sudo -n cp "$SGX_DEB" "$DST/tmp/$f"; debs="$debs /tmp/$f"; continue; } ;;
+	esac
+	sudo -n curl -sfL -o "$DST/tmp/$f" "$GH/n950-maemo-leste/releases/download/$(echo "${d%/*}" | sed 's/+/%2B/g')/$f"
+	debs="$debs /tmp/$f"
+done < "$REPO/rootfs/release-debs"
+in_target "apt-get -q -y --no-install-recommends -o Dpkg::Options::=--force-confold install $debs && rm -f $debs"
 # Leste has no driver for the N950's modem, and without it sphone only
 # restarts itself over and over: not started with the session
 in_target "dpkg-divert --quiet --local --rename --add /etc/X11/Xsession.post/70sphone"
@@ -238,6 +236,10 @@ sudo -n install -D -m 755 "$REPO/gps/harmattan-gps" "$DST/usr/sbin/harmattan-gps
 sudo -n install -D -m 755 "$REPO/gps/harmattan-gps.initd" "$DST/etc/init.d/harmattan-gps"
 sudo -n install -D -m 644 "$REPO/gps/harmattan-gps.conf" "$DST/etc/dbus-1/system.d/harmattan-gps.conf"
 in_target "rc-update add n950-firmware boot && rc-update add n950-usbnet default"
+# personalisation through /usr/lib/n950/personalisation (works with /tmp
+# on tmpfs; without it the default theme was never set)
+in_target "dpkg-divert --quiet --local --rename --divert /usr/bin/personalisation.real --add /usr/bin/personalisation &&
+	ln -sf /usr/lib/n950/personalisation /usr/bin/personalisation"
 # Measured 2026-11-09: maemo-xinput-sounds leaves every input sound's pipewire
 # stream running (8+ "running" streams, wireplumber/pipewire 6-11 % CPU for
 # good), exim4 has no job on the phone, and the TWL5031 RTC cannot be set by
