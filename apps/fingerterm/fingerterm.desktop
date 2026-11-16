@@ -1,0 +1,12 @@
+[Desktop Entry]
+Encoding=UTF-8
+Version=1.0
+Type=Application
+Name=FingerTerm
+Name[de]=FingerTerm
+Comment=Terminal with its own on-screen keyboard
+Comment[de]=Terminal mit eigener Bildschirmtastatur
+Exec=/usr/bin/fingerterm-leste
+Icon=fingerterm
+Categories=System;TerminalEmulator;
+X-Osso-Type=application/x-executable

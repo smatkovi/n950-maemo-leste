@@ -1,0 +1,11 @@
+#!/bin/sh
+# FingerTerm in Leste's session: it brings its own keyboard, so no input
+# method (Maliit would pop up over it on every tap), Qt's xcb backend, and a
+# login shell in the user's home. Not full screen (-nofs): Hildon keeps its
+# title bar with the task switcher and the close button, the only way out
+# without edge gestures.
+unset QT_IM_MODULE
+QT_QPA_PLATFORM=xcb
+export QT_QPA_PLATFORM
+cd "$HOME"
+exec /usr/bin/fingerterm -nofs "$@"
