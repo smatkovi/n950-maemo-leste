@@ -168,6 +168,13 @@ sudo -n install -D -m 644 "$HERE/Xsession.d/89n9-maliit" "$DST/etc/X11/Xsession.
 sudo -n install -D -m 644 "$HERE/Xsession.post/16n9-maliit-server" "$DST/etc/X11/Xsession.post/16n9-maliit-server"
 sudo -n install -D -m 644 "$HERE/90_n9-maliit.gschema.override" "$DST/usr/share/glib-2.0/schemas/90_n9-maliit.gschema.override"
 in_target "glib-compile-schemas /usr/share/glib-2.0/schemas"
+# Hildon's own on-screen keyboard for GTK/Hildon programs (terminal, Wi-Fi
+# password, ...): Leste's defaults suit devices with a keyboard (current
+# plugin hildon_keyboard_assistant, use_finger_kb unset = off), and then a
+# tap never brings up hildon_western_fkb.
+G="gconftool-2 --direct --config-source=xml:readwrite:/etc/gconf/gconf.xml.defaults"
+in_target "$G --type bool --set /apps/osso/inputmethod/use_finger_kb true &&
+	$G --type string --set /apps/osso/inputmethod/input_method_plugin hildon_western_fkb"
 
 log "N950 files (rootfs/overlay), the N9's Wi-Fi modules"
 sudo -n rsync -rlpt --chown=root:root "$REPO/rootfs/overlay/" "$DST/"
