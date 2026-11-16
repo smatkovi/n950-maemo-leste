@@ -1,0 +1,4 @@
+# N9: the on-screen keyboard starts in German, English one swipe away
+[org.maliit.keyboard.maliit]
+active-language='de'
+enabled-languages=['de', 'en']

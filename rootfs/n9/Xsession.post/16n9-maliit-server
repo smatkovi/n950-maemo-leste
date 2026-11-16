@@ -1,0 +1,5 @@
+# The Maliit server, started and restarted by dsme like hildon-input-method
+# (25hildon-input-method-configurator), before hildon-desktop.
+if [ "${QT_IM_MODULE:-}" = Maliit ] && [ -x /usr/bin/n9-maliit-server ]; then
+	/usr/sbin/dsmetool -t /usr/bin/n9-maliit-server
+fi

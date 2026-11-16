@@ -1,0 +1,15 @@
+#!/bin/sh
+# Grow the root file system to fill its partition, once. An image can be made
+# smaller than the partition it is written to (the N9's Alt_OS); ext4 grows
+# online. Without spare space resize2fs does nothing.
+M=/var/lib/n950/root-resized
+[ -e "$M" ] && exit 0
+dev=$(findmnt -no SOURCE /)
+case $dev in
+/dev/mmcblk*p[0-9]*) ;;
+*) exit 0 ;;
+esac
+if resize2fs "$dev" > /var/log/resize-root.log 2>&1; then
+	mkdir -p "${M%/*}"
+	touch "$M"
+fi

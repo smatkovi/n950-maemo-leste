@@ -1,0 +1,13 @@
+# N9: Leste has to fit the 2.4 GiB Alt_OS partition. No documentation or
+# manual pages, translations only in German and English (Hildon's osso-*.mo
+# included). Copyright files stay.
+path-exclude=/usr/share/doc/*
+path-include=/usr/share/doc/*/copyright
+path-exclude=/usr/share/man/*
+path-exclude=/usr/share/info/*
+path-exclude=/usr/share/locale/*
+path-include=/usr/share/locale/de/*
+path-include=/usr/share/locale/de_*/*
+path-include=/usr/share/locale/en/*
+path-include=/usr/share/locale/en_*/*
+path-include=/usr/share/locale/locale.alias

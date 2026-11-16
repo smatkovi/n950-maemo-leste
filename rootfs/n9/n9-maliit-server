@@ -1,0 +1,8 @@
+#!/bin/sh
+# Maliit's server (with the maliit-keyboard plugin) on the N9's X11 session:
+# on Qt's xcb backend, not Leste's maemo one, and not loading Maliit as its
+# own input method.
+QT_QPA_PLATFORM=xcb
+export QT_QPA_PLATFORM
+unset QT_IM_MODULE
+exec /usr/bin/maliit-server "$@"

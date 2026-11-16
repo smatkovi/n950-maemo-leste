@@ -1,0 +1,17 @@
+# N9 (no hardware keyboard): Qt programs use the Maliit on-screen keyboard,
+# as Harmattan's apps used meego-im-uiserver. EmbedLite's qtmozembed shows it
+# by itself when a web field takes the focus (inputMethod()->show()).
+# Overrides Leste's QT_IM_MODULE=him (/etc/profile.d/qt-maemo.sh). The Hildon
+# (GTK2) programs keep hildon-input-method and its own on-screen keyboard.
+# IM=him in /etc/n9-im switches Qt back to hildon-input-method.
+IM=maliit
+if [ -r /etc/n9-im ]; then
+	. /etc/n9-im
+fi
+if [ "$IM" = maliit ] && [ -x /usr/bin/maliit-server ]; then
+	QT_IM_MODULE=Maliit
+	export QT_IM_MODULE
+	if [ -x /usr/bin/dbus-update-activation-environment ]; then
+		dbus-update-activation-environment QT_IM_MODULE
+	fi
+fi

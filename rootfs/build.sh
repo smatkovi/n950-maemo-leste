@@ -27,6 +27,10 @@ WORK=${WORK:?set WORK=<work directory of kernel/build.sh>}
 SRC_IMG=${SRC_IMG:?set SRC_IMG=<Leste N900 image, uncompressed>}
 OUT=${OUT:-$WORK/n950-leste.img}
 SIZE_SECTORS=${SIZE_SECTORS:-8388608}		# 4 GiB, partition 4
+# n950 or n9: picks the device tree (omap3-$DEVICE.dtb), and for the N9
+# (no hardware keyboard) installs the Maliit on-screen keyboard
+DEVICE=${DEVICE:-n950}
+DTB=omap3-$DEVICE.dtb
 ROOT_PW=${ROOT_PW:-n950-leste}
 SSH_PUBKEY=${SSH_PUBKEY:-}
 FM_DEB=${FM_DEB:-}
@@ -47,8 +51,8 @@ log() { echo ">> $*"; }
 KREL=$(cat "$KOUT/include/config/kernel.release" 2>/dev/null) ||
 	{ echo "no kernel in $KOUT, run kernel/build.sh first"; exit 1; }
 [ -f "$KOUT/arch/arm/boot/zImage" ] &&
-[ -f "$KOUT/arch/arm/boot/dts/ti/omap/omap3-n950.dtb" ] ||
-	{ echo "zImage or omap3-n950.dtb missing in $KOUT"; exit 1; }
+[ -f "$KOUT/arch/arm/boot/dts/ti/omap/$DTB" ] ||
+	{ echo "zImage or $DTB missing in $KOUT"; exit 1; }
 
 # Arch registers the dynamically linked qemu-arm, whose libraries are not in
 # the chroot: while building, the static one takes its place.
@@ -112,9 +116,9 @@ sudo -n mount -o loop "$OUT" "$DST"
 log "copying Leste (without the N900's swap file)"
 sudo -n rsync -aHAX --numeric-ids --exclude=/swap "$SRC/" "$DST/"
 
-log "kernel $KREL with the N950's device tree appended, modules"
+log "kernel $KREL with the $DEVICE's device tree ($DTB) appended, modules"
 sudo -n mkdir -p "$DST/boot"
-cat "$KOUT/arch/arm/boot/zImage" "$KOUT/arch/arm/boot/dts/ti/omap/omap3-n950.dtb" |
+cat "$KOUT/arch/arm/boot/zImage" "$KOUT/arch/arm/boot/dts/ti/omap/$DTB" |
 	sudo -n tee "$DST/boot/zImage-$KREL" > /dev/null
 sudo -n ln -sf "zImage-$KREL" "$DST/boot/zImage"
 sudo -n cp "$KOUT/.config" "$DST/boot/config-$KREL"
@@ -210,8 +214,24 @@ in_target "for s in wl1251-cal gps-nokia-n900; do rc-update del \$s sysinit; rc-
 # wlcore reads wl127x-nvs.bin for the N950's chip
 in_target "dpkg-divert --quiet --local --rename --add /lib/firmware/ti-connectivity/wl127x-nvs.bin"
 
+if [ "$DEVICE" = n9 ]; then
+	# The N9 has no hardware keyboard: the Maliit on-screen keyboard for Qt
+	# (EmbedLite's qtmozembed already calls inputMethod()->show() on a focused
+	# web field) and GTK/Hildon programs, as Harmattan has it (meego-im-uiserver).
+	log "N9: Maliit on-screen keyboard"
+	in_target "apt-get -q -y --no-install-recommends install maliit-framework maliit-keyboard"
+	sudo -n install -D -m 755 "$REPO/rootfs/n9/n9-maliit-server" "$DST/usr/bin/n9-maliit-server"
+	sudo -n install -D -m 644 "$REPO/rootfs/n9/Xsession.d/89n9-maliit" "$DST/etc/X11/Xsession.d/89n9-maliit"
+	sudo -n install -D -m 644 "$REPO/rootfs/n9/Xsession.post/16n9-maliit-server" "$DST/etc/X11/Xsession.post/16n9-maliit-server"
+	sudo -n install -D -m 644 "$REPO/rootfs/n9/90_n9-maliit.gschema.override" "$DST/usr/share/glib-2.0/schemas/90_n9-maliit.gschema.override"
+	in_target "glib-compile-schemas /usr/share/glib-2.0/schemas"
+fi
+
 log "N950 files (rootfs/overlay)"
 sudo -n rsync -rlpt --chown=root:root "$REPO/rootfs/overlay/" "$DST/"
+# the N9's wl1271 is on SDIO, not SPI
+[ "$DEVICE" = n9 ] &&
+	sudo -n install -m 644 "$REPO/rootfs/n9/modules-load.d/n950-wifi.conf" "$DST/etc/modules-load.d/n950-wifi.conf"
 # GPS through Harmattan's stack (gps/README.md), started by hand
 sudo -n install -D -m 755 "$REPO/gps/positioningd-gpsd.py" "$DST/usr/lib/n950-gps/positioningd-gpsd.py"
 sudo -n install -D -m 755 "$REPO/gps/harmattan-gps" "$DST/usr/sbin/harmattan-gps"
