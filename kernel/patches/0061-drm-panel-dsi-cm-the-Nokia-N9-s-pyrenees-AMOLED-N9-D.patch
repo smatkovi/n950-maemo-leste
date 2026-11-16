@@ -1,0 +1,79 @@
+From 0c377cf6ca5b0d8c3cbe7a80b07258a27124410a Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 16 Nov 2026 08:46:28 +0100
+Subject: [PATCH 61/61] drm/panel: dsi-cm: the Nokia N9's pyrenees AMOLED; N9
+ DSI lanes
+
+The N9's panel (pyrenees) is the N950's (himalaya) size, but mounted
+the other way round: Nokia's board file sets rotate 1 (MX and MV, 0x60)
+where the N950 has rotate 3 (MY and MV, 0xa0), and no lines are hidden
+before the shown ones. Its data lanes 1 and 2 are on DSI lanes 3 and 1,
+the N950's the other way round (board-rm696-video.c).
+
+Without a match for nokia,pyrenees the driver did not bind at all on
+the N9.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n9.dts |  7 ++++++-
+ drivers/gpu/drm/panel/panel-dsi-cm.c   | 19 +++++++++++++++++++
+ 2 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n9.dts b/arch/arm/boot/dts/ti/omap/omap3-n9.dts
+index 7d4d56573..9b8011b71 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n9.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n9.dts
+@@ -383,7 +383,12 @@ &dsi {
+ 	port {
+ 		dsi_out_ep: endpoint {
+ 			remote-endpoint = <&lcd0_in>;
+-			lanes = <2 3 0 1 4 5>;
++			/*
++			 * clock on lane 2, data 1 on lane 3, data 2 on lane 1
++			 * (board-rm696-video.c; the N950 has data 1 and 2 the
++			 * other way round)
++			 */
++			lanes = <2 3 4 5 0 1>;
+ 		};
+ 	};
+ 
+diff --git a/drivers/gpu/drm/panel/panel-dsi-cm.c b/drivers/gpu/drm/panel/panel-dsi-cm.c
+index fd1a7ec88..f1b59db49 100644
+--- a/drivers/gpu/drm/panel/panel-dsi-cm.c
++++ b/drivers/gpu/drm/panel/panel-dsi-cm.c
+@@ -1055,6 +1055,24 @@ static const struct dsic_panel_data himalaya_data = {
+ 	.te_support = false,
+ };
+ 
++/*
++ * The N9's AMOLED, the same 480x854 in its memory but mounted the other way
++ * round (Nokia's rotate 1: MX and MV) and with no hidden lines before the
++ * shown ones. Brightness is the DCS display brightness, as on the N950.
++ */
++static const struct dsic_panel_data pyrenees_data = {
++	.xres = 854,
++	.yres = 480,
++	.address_mode = 0x60,
++	.partial = true,
++	.refresh = 60,
++	.width_mm = 87,
++	.height_mm = 48,
++	.max_hs_rate = 300000000,
++	.max_lp_rate = 10000000,
++	.te_support = false,
++};
++
+ static const struct dsic_panel_data droid4_data = {
+ 	.xres = 540,
+ 	.yres = 960,
+@@ -1081,6 +1099,7 @@ static const struct dsic_panel_data razr_xt9xx_data = {
+ static const struct of_device_id dsicm_of_match[] = {
+ 	{ .compatible = "tpo,taal", .data = &taal_data },
+ 	{ .compatible = "nokia,himalaya", &himalaya_data },
++	{ .compatible = "nokia,pyrenees", &pyrenees_data },
+ 	{ .compatible = "motorola,droid4-panel", &droid4_data },
+ 	{ .compatible = "motorola,razr-xt910-panel", &razr_xt9xx_data },
+ 	{},
+-- 
+2.56.0
+
