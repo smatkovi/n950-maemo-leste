@@ -158,6 +158,10 @@ while read -r d; do
 	sudo -n curl -sfL -o "$DST/tmp/$f" "$GH/$(echo "${d%/*}" | sed 's/+/%2B/g')/$f"
 	debs="$debs /tmp/$f"
 done < "$REPO/rootfs/release-debs"
+# the N9's own: FingerTerm, a terminal with its own keyboard
+f=fingerterm_1.5.0-n950.1_armhf.deb
+sudo -n curl -sfL -o "$DST/tmp/$f" "$GH/fingerterm-1.5.0-n950.1/$f"
+debs="$debs /tmp/$f"
 in_target "apt-get -q -y --no-install-recommends -o Dpkg::Options::=--force-confold install $debs maliit-framework maliit-keyboard wmctrl"
 # Nothing depends on these, and the N9 has no use for them: Vulkan (the
 # SGX530 has none) and an English speech-recognition model no program uses
