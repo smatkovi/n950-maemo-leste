@@ -1,0 +1,41 @@
+From 3abe625a1f6f28b19620ba8a0e9d5f1defe93f4e Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Mon, 16 Nov 2026 10:19:21 +0100
+Subject: [PATCH] ARM: dts: omap3-n9: VWLAN at 1.8 V for the SDIO host
+
+omap_hsmmc takes the card's OCR from vmmc's voltage; the shared
+fixed VWLAN regulator had none (the N950's SPI WL1271 only switches it),
+so MMC3 never powered the N9's WL1271 ("Failed getting OCR mask: -22").
+1.8 V as Nokia's VSDIO, with time for the chip to come up.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/boot/dts/ti/omap/omap3-n9.dts | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm/boot/dts/ti/omap/omap3-n9.dts b/arch/arm/boot/dts/ti/omap/omap3-n9.dts
+index 9b8011b71..992d588ff 100644
+--- a/arch/arm/boot/dts/ti/omap/omap3-n9.dts
++++ b/arch/arm/boot/dts/ti/omap/omap3-n9.dts
+@@ -138,6 +138,18 @@ csi2a_ep: endpoint {
+  * interrupt (gpio 42) come from the shared dtsi (vwlan_fixed, wlan_pins).
+  * reg = <2> is the WLAN SDIO function.
+  */
++/*
++ * VWLAN (gpio 35) powers the WL1271 as the SDIO host's vmmc: the host needs
++ * its voltage for the card's OCR, or it never powers the card ("Failed
++ * getting OCR mask"). 1.8 V, as Nokia's VSDIO; the delay lets the WL1271
++ * come up before the first SDIO command.
++ */
++&vwlan_fixed {
++	regulator-min-microvolt = <1800000>;
++	regulator-max-microvolt = <1800000>;
++	startup-delay-us = <70000>;
++};
++
+ &mmc3 {
+ 	status = "okay";
+ 	vmmc-supply = <&vwlan_fixed>;
+-- 
+2.56.0
+

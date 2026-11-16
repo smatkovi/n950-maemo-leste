@@ -4,8 +4,13 @@
 # board, not the generic one of firmware-ti-connectivity), the Bluetooth
 # firmware that hci_nokia loads and the FM receiver's patch that
 # radio-wl1273 uploads when it switches the receiver on (it runs without
-# one too). Copied once, on the first boot; delete the copies to fetch
-# them again.
+# one too). Copied once, on the first boot; delete the copies (for the
+# NVS: /var/lib/n950/nvs-from-harmattan) to fetch them again.
+#
+# The NVS is copied over whatever is in place until the marker says it came
+# from Harmattan: images carry firmware-ti-connectivity's generic
+# wl127x-nvs.bin, and taking that for "already copied" left the N9 (and
+# fresh N950 installs) without their own calibration.
 
 description="Copy the N950's Wi-Fi, Bluetooth and FM files from Harmattan"
 
@@ -14,6 +19,7 @@ MNT=/run/n950-harmattan
 # the name wlcore asks for with a wl127x chip (Harmattan calls it wl1271-nvs.bin)
 NVS=/lib/firmware/ti-connectivity/wl127x-nvs.bin
 FM=/lib/firmware/radio-wl1273-fw.bin
+NVS_MARK=/var/lib/n950/nvs-from-harmattan
 
 depend() {
 	after checkroot.sh mountall.sh
@@ -28,15 +34,22 @@ copy() {
 }
 
 start() {
-	[ -e "$NVS" ] && [ -e /lib/firmware/nokia/ti1273.bin ] && [ -e "$FM" ] && return 0
+	[ -e "$NVS_MARK" ] && [ -e /lib/firmware/nokia/ti1273.bin ] && [ -e "$FM" ] && return 0
 	ebegin "Copying the Wi-Fi, Bluetooth and FM files from Harmattan"
 	mkdir -p "$MNT"
 	if ! mount -o ro "$HARMATTAN" "$MNT"; then
 		eend 1 "cannot mount $HARMATTAN"
 		return 0
 	fi
-	nvs_was=$([ -e "$NVS" ] && echo yes)
-	copy lib/firmware/wl1271-nvs.bin "$NVS"
+	nvs_was=$(md5sum < "$NVS" 2>/dev/null)
+	if [ ! -e "$NVS_MARK" ]; then
+		if [ -f "$MNT/lib/firmware/wl1271-nvs.bin" ]; then
+			mkdir -p "$(dirname "$NVS")" "${NVS_MARK%/*}" &&
+				cp "$MNT/lib/firmware/wl1271-nvs.bin" "$NVS" && touch "$NVS_MARK"
+		else
+			ewarn "Harmattan has no lib/firmware/wl1271-nvs.bin"
+		fi
+	fi
 	copy lib/firmware/ti1273.bin /lib/firmware/nokia/ti1273.bin
 	copy lib/firmware/radio-wl1273-fw.bin "$FM"
 	umount "$MNT"
@@ -44,7 +57,7 @@ start() {
 	# Without Harmattan's NVS the generic one has to do
 	[ -e "$NVS" ] || cp "$NVS.distrib" "$NVS" 2>/dev/null
 	# wlcore read the NVS (or found none) when it probed: probe again
-	if [ -z "$nvs_was" ] && lsmod | grep -q '^wl12xx'; then
+	if [ "$(md5sum < "$NVS" 2>/dev/null)" != "$nvs_was" ] && lsmod | grep -q '^wl12xx'; then
 		modprobe -r wl12xx && modprobe wl12xx
 	fi
 	eend 0
