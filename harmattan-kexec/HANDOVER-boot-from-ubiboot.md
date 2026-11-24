@@ -445,4 +445,4 @@ to RET/OFF. Other latency sources seen: wl1271 holds `max_mpu_wakeup_lat 0` whil
 is out of PSM (WL12XX_PERF_HIGH_THROUGHPUT, board-rm680-peripherals.c), e.g. under ssh
 traffic; it is released again in PSM.
 
-Still to do: make slot 6 the `G_DEFAULT_KERNEL` (owner's call).
+**18:40: slot 6 is now `G_DEFAULT_KERNEL`** (owner's go-ahead; backup `ubiboot.conf.bak-pre-default-l2fix-20261124`). It is also what ubiboot boots on RTC-alarm/USB wake-ups (ACT_DEAD charging). Slot 5 stays in the menu as the fallback.
