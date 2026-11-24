@@ -374,12 +374,39 @@ On the N950 every L1 miss goes to DRAM, and the page-table walks miss too.
 
 **Cause:** ubiboot's kernel sets ACTLR.L2EN in `cpu_v7_proc_init` (the openmode l2fix)
 and clears it again in `cpu_v7_proc_fin` before kexec. The PR1.3 kernel's
-`cpu_v7_proc_init` is a bare `mov pc, lr` (it relies on NOLO), so nothing sets L2EN again.
-Why the N9 keeps its L2 through the same chain is not known; there the clear apparently
-has no effect.
+`cpu_v7_proc_init` is a bare `mov pc, lr` (it relies on NOLO). Its only L2EN writes are in
+`sleep34xx.S` (`logic_l1_restore: orr #2`), on every wake from MPU retention/OFF. The N9
+gets its L2 back that way: `pm_debug/count` there shows mpu_pwrdm RET 107 352 / OFF 63 109
+and all C-states in use. **The N950 never leaves C1** (C2–C8 usage 0, mpu/core/per RET 0
+OFF 0), so its L2 never comes back, and it idles at full power too.
 
-**Fix:** `patches/0009-armv7-set-l2en-in-cpu-v7-proc-init.patch`, the three-line L2 hunk
-of UbiBoot's `openmode_l2fix.patch` without its Aegis changes, on top of `n950-mmcfix`.
-Built as `~/n950/zImage_2.6.32.54-dfl61-20121301-mmcfix-nokia-l2fix` (md5 f47e5d8c,
-build dir `pr13-nokia-l2fix`); `Module.symvers` identical to the slot 5 kernel. Not
-deployed yet. Aegis refuses unsigned modules, so a live test with a module is not an option.
+Why the N950 stays in C1 is still open. Ruled out so far: the PM debug knobs
+(sleep_while_idle, enable_off_mode, cpuidle_forced_state are the same as on the N9), the
+cam/dss power domains (both OFF), pm_optimizer (the McSPI4/WLAN 120 µs limit applies only
+while its load is at least 10; it was 2–9), and console traffic on ttyS0 (NOLO passes
+`console=ttyS0,115200n8` to the N950 only, but there were no UART interrupts in 30 s and
+re-arming its sleep timer changed nothing). Left: the menu governor's choice, or another
+blocker in `omap3_enter_idle_bm`.
+
+**Second bug, in our patch 0003:** `mmc_attach_mmc()` releases the host on its error path,
+and the retry released it again: `WARNING: at drivers/mmc/core/core.c:578
+mmc_release_host` right after "retrying the non-removable card (1)", then
+`mmc_wait_for_cmd` warnings for an unclaimed host. claim_cnt and nesting_cnt end up off by
+one, the host is never lazily disabled, and `mmchs_fck` (MMC2 = eMMC) has usecount 1 at
+idle on the N950 (0 on the N9). That keeps CORE from idling. On its own it does not explain
+the C1-only MPU, because C2/C3 only need CORE INACTIVE.
+
+**Fixes:** `patches/0009-armv7-set-l2en-in-cpu-v7-proc-init.patch`, the three-line L2 hunk
+of UbiBoot's `openmode_l2fix.patch` without its Aegis changes, and
+`patches/0010-mmc-core-do-not-release-the-host-twice-in-the-retry.patch`, both on top of
+`n950-mmcfix` (branch `n950-mmcfix-l2fix`, worktree `kernel-2.6.32-l2fix`). Built as
+`~/n950/zImage_2.6.32.54-dfl61-20121301-mmcfix2-nokia-l2fix` (md5 f53983d6, build dir
+`pr13-nokia-l2fix`); `Module.symvers` identical to the slot 5 kernel. Whether a
+non-secure write to ACTLR sticks on the N950 is inferred from the N9 (same kernel code,
+L2 comes back), not shown on the N950 itself. Not deployed yet. Aegis refuses unsigned
+modules, so a live test with a module is not an option.
+
+**Menu:** `select_os_animated.sh` shows only the first `G_OS2_NUM` entries of an OS (max 6).
+With `G_OS2_NUM=3` the working slot 5 is not in the menu at all; it boots only as
+`G_DEFAULT_KERNEL` on timeout. To test a slot 6 kernel without changing the default, set
+`G_OS2_NUM=6`.
