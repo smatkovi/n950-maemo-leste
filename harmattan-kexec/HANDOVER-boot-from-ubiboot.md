@@ -355,3 +355,31 @@ Still open on the ubiboot side: `G_DEFAULT_KERNEL` points at the stock openmode 
 and `G_OS2_NUM` on p1 was never read back (the local copy says 1, which would hide slots
 2–5 in the menu); the menu path for slot 5 is therefore untested. Both are one conf edit
 in maintenance mode, pending the owner's OK. The owner then booted Leste from the menu.
+
+## Update 2026-11-24 — MeeGo from ubiboot runs without L2 cache (N950)
+
+`tools/cachebench.c` (static, Madde gcc `-mcpu=cortex-a8`, runs as `user` from
+/home/user) measures the real clock with a dependent ADD chain and the latency of a
+random pointer chase per working-set size. N950 MeeGo (slot 5 kernel) vs N9 MeeGo, same
+zImage, both kexec'd by the same ubiboot kernel (`2.6.32.54-ubiboot-02-b`):
+
+| working set | N950 | N9 |
+| --- | --- | --- |
+| clock | 997.7 MHz | 1107.8 MHz |
+| ≤ 32 KB (L1) | 3 cycles | 3 cycles |
+| 48–256 KB | 113–375 ns | 8–33 ns |
+| 8 MB | 522 ns | 230 ns |
+
+On the N950 every L1 miss goes to DRAM, and the page-table walks miss too.
+
+**Cause:** ubiboot's kernel sets ACTLR.L2EN in `cpu_v7_proc_init` (the openmode l2fix)
+and clears it again in `cpu_v7_proc_fin` before kexec. The PR1.3 kernel's
+`cpu_v7_proc_init` is a bare `mov pc, lr` (it relies on NOLO), so nothing sets L2EN again.
+Why the N9 keeps its L2 through the same chain is not known; there the clear apparently
+has no effect.
+
+**Fix:** `patches/0009-armv7-set-l2en-in-cpu-v7-proc-init.patch`, the three-line L2 hunk
+of UbiBoot's `openmode_l2fix.patch` without its Aegis changes, on top of `n950-mmcfix`.
+Built as `~/n950/zImage_2.6.32.54-dfl61-20121301-mmcfix-nokia-l2fix` (md5 f47e5d8c,
+build dir `pr13-nokia-l2fix`); `Module.symvers` identical to the slot 5 kernel. Not
+deployed yet. Aegis refuses unsigned modules, so a live test with a module is not an option.
