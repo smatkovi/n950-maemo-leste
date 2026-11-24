@@ -424,3 +424,25 @@ patch 0009 will do its job. No errors afterwards; still C1 only, as expected.
 **Deployed (not default):** p2 `/boot/zImage_2.6.32.54-dfl61-20121301-mmcfix2-nokia-l2fix`
 (md5 f53983d6); `ubiboot.conf` (backup `ubiboot.conf.bak-pre-l2fix-20261124`):
 `G_OS2_NUM=6`, slot 6 "MeeGo L2 + mmc fix (Test)". `G_DEFAULT_KERNEL` is still slot 5.
+
+## Update 2026-11-24 18:30 — slot 6 kernel booted: L2 on, deep idle works
+
+The owner booted slot 6 (`#2 PREEMPT Tue Nov 24 17:59:47`, ubiboot log "running kernel
+…mmcfix2-nokia-l2fix"). "retrying the non-removable card (1)" still happens, but without
+any WARNING. cachebench right after boot: 64 KB 10.4 ns, 8 MB 222 ns (L2 on from the
+start). An on-device sampler (no ssh traffic, 90 s) shows mpu_pwrdm RET 60 / OFF 132,
+core OFF 132, C7 113× after four minutes of uptime; `mmchs_fck:1` usecount 0 at idle.
+
+**This also solves the C1-only riddle.** `hsmmc_set_pm_constraints()`
+(arch/arm/mach-omap2/hsmmc.c) sets `omap_pm_set_max_mpu_wakeup_lat(dev, 100)` in
+`omap_hsmmc_disabled_to_enabled()` and drops it only in `enabled_to_disabled/sleep`.
+The double release in the old retry kept the eMMC host enabled for good, so the 100 µs
+limit stayed: the menu governor never chose C2 (exit latency 146 µs). Without MPU
+RET/OFF the sleep34xx.S restore never set L2EN again, so the old kernel ran with no L2
+and idled at full power. Early in the sampling window `core_latency`/`mpu_latency: 100`
+from `mmci-omap-hs.1` was still there (boot I/O); as soon as it was dropped the N950 went
+to RET/OFF. Other latency sources seen: wl1271 holds `max_mpu_wakeup_lat 0` while the WLAN
+is out of PSM (WL12XX_PERF_HIGH_THROUGHPUT, board-rm680-peripherals.c), e.g. under ssh
+traffic; it is released again in PSM.
+
+Still to do: make slot 6 the `G_DEFAULT_KERNEL` (owner's call).
