@@ -410,3 +410,17 @@ modules, so a live test with a module is not an option.
 With `G_OS2_NUM=3` the working slot 5 is not in the menu at all; it boots only as
 `G_DEFAULT_KERNEL` on timeout. To test a slot 6 kernel without changing the default, set
 `G_OS2_NUM=6`.
+
+**Live test 2026-11-24 18:20 (owner's go-ahead):** `tools/l2fix/l2fix.c`, built against
+`pr13-nokia` (`make -C <ksrc> O=<build> M=$PWD ARCH=arm CROSS_COMPILE=…`), packaged as
+`/opt/l2fix/l2fix.ko` with a `digsigsums` line, signed with INCEPTION's `inpkgsign`, its
+SHA1 written (20 raw bytes) to `/sys/kernel/security/validator/modlist`. Read-out on the
+N950: `ACTLR=00000040 (L2EN=0)`, SCTLR C/I/Z on, NSACR 00070c00. `insmod … enable=1`
+(flush_cache_all with IRQs off, then set L2EN): **`ACTLR 00000040 -> 00000042, L2
+ENABLED`**, and it sticks. cachebench right after: 48–128 KB 8.5–18 ns, 256 KB 90 ns,
+8 MB 216 ns, the same as the N9. So a non-secure ACTLR write works on the N950, and
+patch 0009 will do its job. No errors afterwards; still C1 only, as expected.
+
+**Deployed (not default):** p2 `/boot/zImage_2.6.32.54-dfl61-20121301-mmcfix2-nokia-l2fix`
+(md5 f53983d6); `ubiboot.conf` (backup `ubiboot.conf.bak-pre-l2fix-20261124`):
+`G_OS2_NUM=6`, slot 6 "MeeGo L2 + mmc fix (Test)". `G_DEFAULT_KERNEL` is still slot 5.
