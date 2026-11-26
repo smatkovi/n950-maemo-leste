@@ -30,6 +30,11 @@ syntax error in it stops ubiboot (recovery with the flasher).
 
 ## Charging an empty battery from ubiboot
 
+The maintained version of this is its own repository,
+[n950-battery-rescue](https://github.com/smatkovi/n950-battery-rescue): it
+adds temperature, overvoltage and gauge-failure cut-offs, `--stop`,
+`--replace` and a prebuilt `i2crw`. The scripts here are the first version.
+
 ubiboot's kernel has no bq24153 or BCC driver and nothing kicks the TWL5031
 BCC watchdog, so in maintenance mode on a PC port the charger sits idle (CD
 pin raised, LOW_CHG cap) and the phone runs on the battery: measured 3.06 V
@@ -60,5 +65,5 @@ second, waits at 10 % or below and flashes from 11 %. The `-Owait-charging`
 option it mentions does not exist. `../tools/flasher-charge-guard.py`
 wraps that flash (with the ubiboot kernel already in mtd2 as the only image)
 and sends SIGINT one percent before the threshold. On this battery the
-ape-algo reported 0 % for 3.5 min and then lost the device, without charging
-it.
+ape-algo reported 0 % for 3.5 min and then lost the connection to the
+device; why is not known.
