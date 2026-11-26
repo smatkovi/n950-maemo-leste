@@ -1,0 +1,60 @@
+From 4be5dcbbd9b34f0a426cccc3975ff5efc6ef9d34 Mon Sep 17 00:00:00 2001
+From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
+Date: Thu, 26 Nov 2026 14:11:19 +0100
+Subject: [PATCH] ARM: OMAP2+: pdata-quirks: re-enable the L2 cache on the
+ Nokia N9/N950
+
+ubiboot clears the Cortex-A8 L2 cache enable (ACR bit 1) before it
+kexecs the kernel, and mainline OMAP3 never sets it again:
+omap_l2_cache_init() is only called for AM43xx and OMAP4, and the OMAP3
+code restores L2 only when the MPU comes back from OFF, which these
+boards do not reach yet (cpuidle stays in C1). Set the bit through the
+secure monitor (PPA service 42, as the N900 quirk already does for
+IBE); HS devices only. On a boot loader that left L2 on this is a no-op.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm/mach-omap2/pdata-quirks.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm/mach-omap2/pdata-quirks.c b/arch/arm/mach-omap2/pdata-quirks.c
+index 7dab5aac9..1fa6b7dfb 100644
+--- a/arch/arm/mach-omap2/pdata-quirks.c
++++ b/arch/arm/mach-omap2/pdata-quirks.c
+@@ -258,6 +258,22 @@ static void __init nokia_n900_legacy_init(void)
+ 	}
+ }
+ 
++static void __init nokia_n9_n950_legacy_init(void)
++{
++	hsmmc2_internal_input_clk();
++
++	/*
++	 * ubiboot clears the Cortex-A8 L2 cache enable (ACR bit 1) before it
++	 * kexecs the kernel, and mainline OMAP3 never re-enables it (it relies
++	 * on the boot loader). Without this the N9/N950 run with L2 disabled.
++	 * Re-enable it through the secure monitor; HS devices only.
++	 */
++	if (omap_type() != OMAP2_DEVICE_TYPE_GP) {
++		pr_info("N9/N950: re-enabling L2 cache (ACR bit 1)\n");
++		rx51_secure_update_aux_cr(BIT(1), 0);
++	}
++}
++
+ static void __init omap3_tao3530_legacy_init(void)
+ {
+ 	hsmmc2_internal_input_clk();
+@@ -513,8 +529,8 @@ static struct pdata_init pdata_quirks[] __initdata = {
+ 	{ "compulab,omap3-sbc-t3530", omap3_sbc_t3530_legacy_init, },
+ 	{ "compulab,omap3-sbc-t3730", omap3_sbc_t3730_legacy_init, },
+ 	{ "nokia,omap3-n900", nokia_n900_legacy_init, },
+-	{ "nokia,omap3-n9", hsmmc2_internal_input_clk, },
+-	{ "nokia,omap3-n950", hsmmc2_internal_input_clk, },
++	{ "nokia,omap3-n9", nokia_n9_n950_legacy_init, },
++	{ "nokia,omap3-n950", nokia_n9_n950_legacy_init, },
+ 	{ "logicpd,dm3730-torpedo-devkit", omap3_logicpd_torpedo_init, },
+ 	{ "ti,omap3-evm-37xx", omap3_evm_legacy_init, },
+ 	{ "ti,am3517-evm", am3517_evm_legacy_init, },
+-- 
+2.56.0
+
