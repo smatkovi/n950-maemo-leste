@@ -1,27 +1,26 @@
-From 4df31d5be20d198245ec1ec9c9f185f2dbc23acf Mon Sep 17 00:00:00 2001
+From dd6e4f4e7013730713e9a3cceab7efe087e97039 Mon Sep 17 00:00:00 2001
 From: Sebastian Matkovich <sebastian.matkovich@gmail.com>
 Date: Thu, 26 Nov 2026 14:11:19 +0100
 Subject: [PATCH] ARM: OMAP2+: pdata-quirks: re-enable the L2 cache on the
  Nokia N9/N950
 
-ubiboot clears the Cortex-A8 L2 cache enable (ACR bit 1) before it
-kexecs the kernel, and mainline OMAP3 never sets it again:
-omap_l2_cache_init() is only called for AM43xx and OMAP4, and the OMAP3
-code restores L2 only when the MPU comes back from OFF, which these
-boards do not reach yet (cpuidle stays in C1).
+ubiboot clears the Cortex-A8 L2 cache enable (ACR bit 1) before it kexecs
+the kernel, and mainline OMAP3 never re-enables it, so the N9/N950 run
+with L2 disabled after a ubiboot boot.
 
-Invalidate L2 and set the bit again through the secure monitor, in the
-order the OFF-mode restore in sleep34xx.S uses (PPA service 40, then
-42); rx51_secure_l2_inval() is new for that. HS devices only, and an L2
-that is already on is left alone, since invalidating it would drop
-dirty lines. The ACR before and after goes to the kernel log.
+Set L2EN with a direct ACR write after cleaning and invalidating all
+cache levels by set/way with interrupts off, as Harmattan's kernel does
+in cpu_v7_proc_init (UbiBoot's l2fix); the N950 takes that write. Only
+if it is ignored, try the secure monitor (PPA services 40 and 42, the
+order of the OFF-mode restore): that route returns 64 on the N950 and
+leaves L2 off. Leave an L2 that is already on alone and log the result.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/arm/mach-omap2/omap-secure.c  | 14 ++++++++++++
+ arch/arm/mach-omap2/omap-secure.c  | 14 ++++++++
  arch/arm/mach-omap2/omap-secure.h  |  1 +
- arch/arm/mach-omap2/pdata-quirks.c | 36 ++++++++++++++++++++++++++++--
- 3 files changed, 49 insertions(+), 2 deletions(-)
+ arch/arm/mach-omap2/pdata-quirks.c | 56 ++++++++++++++++++++++++++++--
+ 3 files changed, 69 insertions(+), 2 deletions(-)
 
 diff --git a/arch/arm/mach-omap2/omap-secure.c b/arch/arm/mach-omap2/omap-secure.c
 index c2e1aecd0..86f257147 100644
@@ -61,16 +60,26 @@ index 2517c4a5a..f17d7279d 100644
  
  extern bool optee_available;
 diff --git a/arch/arm/mach-omap2/pdata-quirks.c b/arch/arm/mach-omap2/pdata-quirks.c
-index 7dab5aac9..63c3a3376 100644
+index 7dab5aac9..b34ef9f6c 100644
 --- a/arch/arm/mach-omap2/pdata-quirks.c
 +++ b/arch/arm/mach-omap2/pdata-quirks.c
-@@ -258,6 +258,38 @@ static void __init nokia_n900_legacy_init(void)
+@@ -25,6 +25,8 @@
+ #include <linux/platform_data/asoc-ti-mcbsp.h>
+ #include <linux/platform_data/ti-prm.h>
+ 
++#include <asm/cacheflush.h>
++
+ #include "clockdomain.h"
+ #include "common.h"
+ #include "common-board-devices.h"
+@@ -258,6 +260,56 @@ static void __init nokia_n900_legacy_init(void)
  	}
  }
  
 +static void __init nokia_n9_n950_legacy_init(void)
 +{
-+	u32 before, after, ret_inval, ret_acr;
++	unsigned long flags;
++	u32 before, direct, after, ret_inval = 0, ret_acr = 0;
 +
 +	hsmmc2_internal_input_clk();
 +
@@ -78,32 +87,49 @@ index 7dab5aac9..63c3a3376 100644
 +	 * ubiboot clears the Cortex-A8 L2 cache enable (ACR bit 1) before it
 +	 * kexecs the kernel, and mainline OMAP3 never re-enables it (it relies
 +	 * on the boot loader). Without this the N9/N950 run with L2 disabled.
-+	 * Invalidate L2 and set the bit again through the secure monitor, in
-+	 * the order the OFF-mode restore in sleep34xx.S uses (PPA services 40
-+	 * and 42). HS devices only, and never touch an L2 that is already on:
-+	 * invalidating a live L2 would throw away dirty lines.
++	 * Never touch an L2 that is already on: invalidating a live L2 would
++	 * throw away dirty lines.
 +	 */
-+	if (omap_type() == OMAP2_DEVICE_TYPE_GP)
-+		return;
-+
 +	asm volatile ("mrc p15, 0, %0, c1, c0, 1" : "=r" (before));
 +	if (before & BIT(1)) {
 +		pr_info("N9/N950: L2 cache already enabled (ACR %#x)\n", before);
 +		return;
 +	}
 +
-+	ret_inval = rx51_secure_l2_inval();
-+	ret_acr = rx51_secure_update_aux_cr(BIT(1), 0);
-+	asm volatile ("mrc p15, 0, %0, c1, c0, 1" : "=r" (after));
-+	pr_info("N9/N950: L2 cache %s (ACR %#x -> %#x, PPA inval %u, acr %u)\n",
++	/*
++	 * The N950 takes a direct ACR write: Harmattan's kernel sets L2EN this
++	 * way in cpu_v7_proc_init (UbiBoot's l2fix), and it works on a running
++	 * N950 as well. Clean and invalidate all cache levels by set/way first,
++	 * with interrupts off, so the L2 starts without stale lines.
++	 */
++	local_irq_save(flags);
++	flush_cache_all();
++	asm volatile ("mcr p15, 0, %0, c1, c0, 1" : : "r" (before | BIT(1)) : "memory");
++	isb();
++	asm volatile ("mrc p15, 0, %0, c1, c0, 1" : "=r" (direct));
++	local_irq_restore(flags);
++
++	/*
++	 * Where the write is ignored (a production HS N9 may only take it in
++	 * the secure world), go through the secure monitor in the order the
++	 * OFF-mode restore in sleep34xx.S uses (PPA services 40 and 42).
++	 */
++	after = direct;
++	if (!(direct & BIT(1)) && omap_type() != OMAP2_DEVICE_TYPE_GP) {
++		ret_inval = rx51_secure_l2_inval();
++		ret_acr = rx51_secure_update_aux_cr(BIT(1), 0);
++		asm volatile ("mrc p15, 0, %0, c1, c0, 1" : "=r" (after));
++	}
++	pr_info("N9/N950: L2 cache %s (ACR %#x -> %#x, direct write %s, PPA inval %u, acr %u)\n",
 +		(after & BIT(1)) ? "re-enabled" : "still disabled",
-+		before, after, ret_inval, ret_acr);
++		before, after, (direct & BIT(1)) ? "took" : "ignored",
++		ret_inval, ret_acr);
 +}
 +
  static void __init omap3_tao3530_legacy_init(void)
  {
  	hsmmc2_internal_input_clk();
-@@ -513,8 +545,8 @@ static struct pdata_init pdata_quirks[] __initdata = {
+@@ -513,8 +565,8 @@ static struct pdata_init pdata_quirks[] __initdata = {
  	{ "compulab,omap3-sbc-t3530", omap3_sbc_t3530_legacy_init, },
  	{ "compulab,omap3-sbc-t3730", omap3_sbc_t3730_legacy_init, },
  	{ "nokia,omap3-n900", nokia_n900_legacy_init, },
